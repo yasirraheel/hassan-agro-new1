@@ -1,6 +1,6 @@
 # Hassan Agro — Laravel + MySQL Sync Backend (Hostinger Ready)
 
-This folder is a complete Laravel 11 + MySQL sync API for the **Hassan Agro** Android app.
+This folder is a Laravel 12 + MySQL sync API for the **Hassan Agro** Android app.
 
 ## Endpoints
 - `GET /api/v1/health` — Verify connection & Bearer token
@@ -17,17 +17,23 @@ In Hostinger **hPanel → Databases → Management**, create a MySQL database an
 - `DB_USERNAME`
 - `DB_PASSWORD`
 
-### 2. Upload `backend-laravel` to Your Domain/Subdomain
-Upload all files inside `backend-laravel/` to your subdomain folder (e.g. `domains/api.yourdomain.com/public_html`).
-- A root `.htaccess` is already included to forward requests into `public/` and preserve the `Authorization: Bearer` header on Hostinger Apache/LiteSpeed.
+### 2. Deploy only the backend to ledger.hassanagro.com
+On the Hassan Agro Hostinger account, run `bash backend-laravel/scripts/deploy-hostinger.sh`
+from a checkout of this repository. For later deployments, run the script from
+`~/.local/share/hassan-agro-ledger/source/backend-laravel/scripts/deploy-hostinger.sh`.
+It performs a sparse Git pull outside `public_html`, then copies only the
+contents of `backend-laravel` into `domains/hassanagro.com/public_html/ledger`.
+The existing `.env`, `vendor`, storage, and cache directories are preserved.
+Each run backs up the previous files outside the web folder.
 
 ### 3. Configure `.env`
-Copy `.env.example` to `.env` and fill in your Hostinger MySQL credentials + a strong secret `SYNC_API_TOKEN`:
+Create `domains/hassanagro.com/public_html/ledger/.env` from `.env.example`
+and fill in your Hostinger MySQL credentials + a strong secret `SYNC_API_TOKEN`:
 
 ```env
 APP_ENV=production
 APP_DEBUG=false
-APP_URL=https://api.yourdomain.com
+APP_URL=https://ledger.hassanagro.com
 
 DB_CONNECTION=mysql
 DB_HOST=127.0.0.1
@@ -39,20 +45,13 @@ DB_PASSWORD=your_db_password
 SYNC_API_TOKEN=your-strong-random-token
 ```
 
-### 4. Install Dependencies & Create Tables (Hostinger SSH)
-```bash
-cd ~/domains/api.yourdomain.com/public_html
-composer install --no-dev --optimize-autoloader
-php artisan key:generate --force
-php artisan migrate --force
-php artisan config:cache
-chmod -R 775 storage bootstrap/cache
-```
-*(Alternatively, you can import `database/schema.sql` directly inside Hostinger **phpMyAdmin** instead of running `php artisan migrate`.)*
+### 4. Install Dependencies & Create Tables
+The deployment script runs Composer, creates an app key if needed, runs
+migrations, and caches configuration. Keep `.env` outside Git.
 
 ### 5. Connect the Hassan Agro Android App
 Open **Settings → Custom Server Sync**:
-- **Server Base URL**: `https://api.yourdomain.com/`
+- **Server Base URL**: `https://ledger.hassanagro.com/`
 - **API Key / Bearer Token**: exact `SYNC_API_TOKEN` from `.env`
 - **WebSocket URL**: leave **empty**
 - Enable **Auto-Sync Changes**, tap **Test**, then **Sync All Businesses Now**.
