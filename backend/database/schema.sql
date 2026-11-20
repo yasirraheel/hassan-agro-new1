@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS `app_user_tokens` (
 
 CREATE TABLE IF NOT EXISTS `businesses` (
   `id` CHAR(36) NOT NULL,
+  `owner_user_id` CHAR(36) NULL,
   `name` VARCHAR(255) NOT NULL,
   `tagline` VARCHAR(255) NOT NULL DEFAULT '',
   `phone` VARCHAR(255) NOT NULL DEFAULT '',
@@ -57,6 +58,7 @@ CREATE TABLE IF NOT EXISTS `businesses` (
   `server_modified_at_ms` BIGINT NOT NULL DEFAULT 0,
   `is_deleted` TINYINT(1) NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`),
+  INDEX `idx_businesses_owner` (`owner_user_id`),
   INDEX `idx_businesses_updated` (`updated_at_ms`),
   INDEX `idx_businesses_server_mod` (`server_modified_at_ms`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

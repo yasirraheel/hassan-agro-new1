@@ -59,5 +59,6 @@ Route::prefix('admin')->name('admin.')->group(function () {
         // Reports & App Sync Settings
         Route::get('/reports', [AdminController::class, 'reports'])->name('reports');
         Route::get('/settings', [AdminController::class, 'settings'])->name('settings');
+        Route::put('/settings/account', [AdminController::class, 'updateAdminAccount'])->name('settings.account');
     });
 });

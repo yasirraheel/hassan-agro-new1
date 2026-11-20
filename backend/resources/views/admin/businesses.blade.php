@@ -15,6 +15,7 @@
             <thead>
                 <tr>
                     <th>Business &amp; Type</th>
+                    <th>Owner Login</th>
                     <th>Theme</th>
                     <th>Features / Currency</th>
                     <th>SKUs</th>
@@ -42,6 +43,13 @@
                             </div>
                         </td>
                         <td>
+                            @if($b->owner_email)
+                                <span class="badge badge-blue">{{ $b->owner_email }}</span>
+                            @else
+                                <span class="badge badge-amber">Not configured</span>
+                            @endif
+                        </td>
+                        <td>
                             <span class="swatch" style="background:{{ $tInfo['primary'] }};"></span>
                             <strong>{{ $tInfo['label'] }}</strong>
                         </td>
@@ -63,7 +71,7 @@
                         </td>
                     </tr>
                 @empty
-                    <tr><td colspan="7" style="text-align:center; color:var(--muted); padding:28px;">No businesses yet.</td></tr>
+                    <tr><td colspan="8" style="text-align:center; color:var(--muted); padding:28px;">No businesses yet.</td></tr>
                 @endforelse
             </tbody>
         </table>
@@ -83,6 +91,26 @@
                 <div class="field form-full">
                     <label>Business Name *</label>
                     <input class="input" name="name" id="biz_name" required placeholder="e.g. City Mart / Hassan Agro / Tech Point">
+                </div>
+                <div class="field form-full" style="border-top:1px solid var(--border); padding-top:14px;">
+                    <label style="font-weight:700;">Business Owner Login</label>
+                    <div style="font-size:12px; color:var(--muted); margin-bottom:8px;">Existing business ke owner ka email/password yahan set ya reset karein. Naye owner ke liye dono zaroori hain; purana password rakhne ke liye password khali chhor dein.</div>
+                </div>
+                <div class="field">
+                    <label>Owner Name</label>
+                    <input class="input" name="owner_name" id="biz_owner_name" placeholder="Owner name">
+                </div>
+                <div class="field">
+                    <label>Owner Email</label>
+                    <input class="input" type="email" name="owner_email" id="biz_owner_email" placeholder="owner@business.com">
+                </div>
+                <div class="field">
+                    <label>Owner Password <span style="font-weight:400; color:var(--muted);">(new/reset)</span></label>
+                    <input class="input" type="password" name="owner_password" id="biz_owner_password" minlength="6" autocomplete="new-password" placeholder="6+ characters">
+                </div>
+                <div class="field">
+                    <label>Confirm Owner Password</label>
+                    <input class="input" type="password" name="owner_password_confirmation" id="biz_owner_password_confirmation" minlength="6" autocomplete="new-password">
                 </div>
                 <div class="field">
                     <label>Business Type Preset</label>
@@ -209,6 +237,10 @@ function openBusinessModal(biz = null) {
         document.getElementById('biz_tax').value = biz.default_tax_rate ?? 0;
         document.getElementById('biz_phone').value = biz.phone || '';
         document.getElementById('biz_email').value = biz.email || '';
+        document.getElementById('biz_owner_name').value = biz.owner_name || '';
+        document.getElementById('biz_owner_email').value = biz.owner_email || '';
+        document.getElementById('biz_owner_password').value = '';
+        document.getElementById('biz_owner_password_confirmation').value = '';
         document.getElementById('biz_tax_id').value = biz.tax_id || '';
         document.getElementById('biz_tagline').value = biz.tagline || '';
         document.getElementById('biz_batch_label').value = biz.batch_field_label || 'Batch No.';
@@ -225,6 +257,10 @@ function openBusinessModal(biz = null) {
         form.action = bizStoreUrl;
         method.value = 'POST';
         form.reset();
+        document.getElementById('biz_owner_name').value = '';
+        document.getElementById('biz_owner_email').value = '';
+        document.getElementById('biz_owner_password').value = '';
+        document.getElementById('biz_owner_password_confirmation').value = '';
         document.getElementById('biz_type').value = 'GENERAL';
         document.getElementById('biz_currency').value = 'Rs.';
         document.getElementById('biz_prefix').value = 'BM';

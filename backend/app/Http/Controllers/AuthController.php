@@ -145,6 +145,7 @@ class AuthController extends Controller
         ) {
             DB::table('businesses')->insert([
                 'id' => $businessId,
+                'owner_user_id' => $userId,
                 'name' => $businessName,
                 'tagline' => (string) ($preset['tagline'] ?? 'Business Management'),
                 'phone' => '',

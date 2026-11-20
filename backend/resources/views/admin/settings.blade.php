@@ -4,6 +4,34 @@
 @section('content')
 <div class="grid-2">
     <div class="card">
+        <h2 class="card-title" style="margin-bottom:12px;">Admin Account</h2>
+        <p style="font-size:13.5px; color:var(--muted); margin-top:0;">
+            Yahan se current admin ka email aur password change kar sakte hain. Password khali chhorne par purana password hi rahega.
+        </p>
+        <form method="POST" action="{{ route('admin.settings.account') }}">
+            @csrf
+            @method('PUT')
+            <div class="field" style="margin-bottom:12px;">
+                <label>Admin Name</label>
+                <input class="input" value="{{ $adminName }}" readonly>
+            </div>
+            <div class="field" style="margin-bottom:12px;">
+                <label>Admin Email *</label>
+                <input class="input" type="email" name="email" value="{{ old('email', $adminEmail) }}" required>
+            </div>
+            <div class="field" style="margin-bottom:12px;">
+                <label>New Password (optional)</label>
+                <input class="input" type="password" name="password" minlength="6" autocomplete="new-password" placeholder="6+ characters">
+            </div>
+            <div class="field" style="margin-bottom:12px;">
+                <label>Confirm New Password</label>
+                <input class="input" type="password" name="password_confirmation" minlength="6" autocomplete="new-password">
+            </div>
+            <button type="submit" class="btn btn-primary">Save Admin Credentials</button>
+        </form>
+    </div>
+
+    <div class="card">
         <h2 class="card-title" style="margin-bottom:12px;">Android App Login &amp; Sync Server</h2>
         <p style="font-size:13.5px; color:var(--muted); margin-top:0;">
             Staff and business owners sign in directly on the <strong>Business Manager</strong> Android app using this Server URL and their assigned email &amp; password (or self-sign-up to create a new business).

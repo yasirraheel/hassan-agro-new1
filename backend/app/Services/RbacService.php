@@ -45,6 +45,17 @@ class RbacService
                 'is_system' => false,
             ],
             [
+                'id' => 'role-business-owner',
+                'name' => 'Business Owner',
+                'description' => 'Full control and customization of the assigned business(es).',
+                'permissions' => [
+                    'view_dashboard', 'manage_inventory', 'use_pos', 'collect_credit',
+                    'return_sales', 'manage_expenses', 'view_reports', 'export_data',
+                    'manage_businesses', 'manage_settings',
+                ],
+                'is_system' => false,
+            ],
+            [
                 'id' => 'role-pos-cashier',
                 'name' => 'POS Cashier',
                 'description' => 'Create POS invoices, apply pricing tiers, and collect credit payments.',

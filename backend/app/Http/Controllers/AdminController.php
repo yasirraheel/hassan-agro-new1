@@ -190,7 +190,9 @@ class AdminController extends Controller
 
     public function businesses(Request $request): View
     {
+        $this->rbac->ensureSeeded();
         $businesses = $this->activeBusinesses();
+        $this->attachOwnerDetails($businesses);
         $selectedBizId = $this->selectedBusinessId($request);
         $activeTheme = $this->activeTheme($request, $businesses);
         $themes = config('sync.themes', []);
@@ -216,6 +218,113 @@ class AdminController extends Controller
         return json_encode(!empty($items) ? $items : $fallback);
     }
 
+    private function ensureBusinessOwnerRole(): string
+    {
+        $roleId = 'role-business-owner';
+        $now = $this->rbac->nowMs();
+        if (!DB::table('roles')->where('id', $roleId)->exists()) {
+            DB::table('roles')->insert([
+                'id' => $roleId,
+                'name' => 'Business Owner',
+                'description' => 'Full control and customization of the assigned business(es).',
+                'permissions_json' => json_encode([
+                    'view_dashboard', 'manage_inventory', 'use_pos', 'collect_credit',
+                    'return_sales', 'manage_expenses', 'view_reports', 'export_data',
+                    'manage_businesses', 'manage_settings',
+                ]),
+                'is_system' => false,
+                'created_at_ms' => $now,
+                'updated_at_ms' => $now,
+            ]);
+        }
+        return $roleId;
+    }
+
+    private function findBusinessOwner(object $business): ?object
+    {
+        $ownerId = (string) ($business->owner_user_id ?? '');
+        if ($ownerId !== '') {
+            $owner = DB::table('app_users')->where('id', $ownerId)->first();
+            if ($owner) {
+                return $owner;
+            }
+        }
+
+        // Link legacy owners created before owner_user_id was added.
+        $users = DB::table('app_users')->where('id', '!=', 'user-super-admin')->get();
+        foreach ($users as $user) {
+            $businessIds = json_decode((string) $user->business_ids_json, true) ?: [];
+            if (in_array((string) $business->id, array_map('strval', $businessIds), true)) {
+                return $user;
+            }
+        }
+        return null;
+    }
+
+    private function attachOwnerDetails($businesses): void
+    {
+        foreach ($businesses as $business) {
+            $owner = $this->findBusinessOwner($business);
+            $business->owner_email = $owner?->email;
+            $business->owner_name = $owner?->name;
+        }
+    }
+
+    private function syncBusinessOwner(string $businessId, string $businessName, array $data): void
+    {
+        $ownerEmail = strtolower(trim((string) ($data['owner_email'] ?? '')));
+        $ownerPassword = (string) ($data['owner_password'] ?? '');
+        if ($ownerEmail === '' && $ownerPassword === '') {
+            return;
+        }
+
+        $business = DB::table('businesses')->where('id', $businessId)->first();
+        $owner = $business ? $this->findBusinessOwner($business) : null;
+        if ($ownerEmail !== '' && DB::table('app_users')->where('email', $ownerEmail)
+            ->when($owner, fn ($q) => $q->where('id', '!=', $owner->id))->exists()) {
+            throw new \RuntimeException('This owner email is already assigned to another account.');
+        }
+
+        $roleId = $this->ensureBusinessOwnerRole();
+        $now = $this->rbac->nowMs();
+        if (!$owner) {
+            if ($ownerEmail === '' || $ownerPassword === '') {
+                throw new \RuntimeException('Owner email and a password are required for a new business login.');
+            }
+            $ownerId = (string) Str::uuid();
+            DB::table('app_users')->insert([
+                'id' => $ownerId,
+                'name' => trim((string) ($data['owner_name'] ?? '')) ?: $businessName,
+                'email' => $ownerEmail,
+                'password_hash' => Hash::make($ownerPassword),
+                'role_id' => $roleId,
+                'business_ids_json' => json_encode([$businessId]),
+                'is_active' => true,
+                'last_login_ms' => 0,
+                'created_at_ms' => $now,
+                'updated_at_ms' => $now,
+            ]);
+            DB::table('businesses')->where('id', $businessId)->update(['owner_user_id' => $ownerId]);
+            return;
+        }
+
+        $update = [
+            'role_id' => $roleId,
+            'business_ids_json' => json_encode([$businessId]),
+            'is_active' => true,
+            'updated_at_ms' => $now,
+        ];
+        if ($ownerEmail !== '') {
+            $update['email'] = $ownerEmail;
+        }
+        if ($ownerPassword !== '') {
+            $update['password_hash'] = Hash::make($ownerPassword);
+            DB::table('app_user_tokens')->where('user_id', $owner->id)->delete();
+        }
+        DB::table('app_users')->where('id', $owner->id)->update($update);
+        DB::table('businesses')->where('id', $businessId)->update(['owner_user_id' => $owner->id]);
+    }
+
     public function storeBusiness(Request $request): RedirectResponse
     {
         $data = $request->validate([
@@ -236,6 +345,10 @@ class AdminController extends Controller
             'payment_methods_csv' => ['nullable', 'string', 'max:500'],
             'default_tax_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'invoice_footer' => ['nullable', 'string', 'max:500'],
+            'owner_name' => ['nullable', 'string', 'max:150'],
+            'owner_email' => ['nullable', 'email', 'max:191'],
+            'owner_password' => ['nullable', 'string', 'min:6', 'max:100'],
+            'owner_password_confirmation' => ['nullable', 'same:owner_password'],
         ]);
 
         $presets = config('sync.business_presets', []);
@@ -243,8 +356,9 @@ class AdminController extends Controller
         $preset = $presets[$bType] ?? $presets['GENERAL'];
 
         $now = $this->rbac->nowMs();
+        $businessId = (string) Str::uuid();
         DB::table('businesses')->insert([
-            'id' => (string) Str::uuid(),
+            'id' => $businessId,
             'name' => trim($data['name']),
             'tagline' => (string) ($data['tagline'] ?: ($preset['tagline'] ?? '')),
             'phone' => (string) ($data['phone'] ?? ''),
@@ -271,6 +385,13 @@ class AdminController extends Controller
             'is_deleted' => false,
         ]);
 
+        try {
+            $this->syncBusinessOwner($businessId, trim($data['name']), $data);
+        } catch (\RuntimeException $e) {
+            DB::table('businesses')->where('id', $businessId)->delete();
+            return back()->withInput()->with('error', $e->getMessage());
+        }
+
         return redirect()->route('admin.businesses')->with('success', 'Business created with custom theme & categories and queued for sync.');
     }
 
@@ -294,6 +415,10 @@ class AdminController extends Controller
             'payment_methods_csv' => ['nullable', 'string', 'max:500'],
             'default_tax_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'invoice_footer' => ['nullable', 'string', 'max:500'],
+            'owner_name' => ['nullable', 'string', 'max:150'],
+            'owner_email' => ['nullable', 'email', 'max:191'],
+            'owner_password' => ['nullable', 'string', 'min:6', 'max:100'],
+            'owner_password_confirmation' => ['nullable', 'same:owner_password'],
         ]);
 
         $presets = config('sync.business_presets', []);
@@ -301,6 +426,16 @@ class AdminController extends Controller
         $preset = $presets[$bType] ?? $presets['GENERAL'];
 
         $now = $this->rbac->nowMs();
+        if (!DB::table('businesses')->where('id', $id)->where('is_deleted', false)->exists()) {
+            return back()->with('error', 'Business not found.');
+        }
+
+        try {
+            $this->syncBusinessOwner($id, trim($data['name']), $data);
+        } catch (\RuntimeException $e) {
+            return back()->withInput()->with('error', $e->getMessage());
+        }
+
         DB::table('businesses')->where('id', $id)->update([
             'name' => trim($data['name']),
             'tagline' => (string) ($data['tagline'] ?? ''),
@@ -1042,8 +1177,37 @@ class AdminController extends Controller
 
     // ---------- Settings / Sync Status ----------
 
+    public function updateAdminAccount(Request $request): RedirectResponse
+    {
+        $adminId = $this->currentAdminId($request);
+        $user = DB::table('app_users')->where('id', $adminId)->first();
+        if (!$user) {
+            return back()->with('error', 'Admin account was not found. Please sign out and sign in again.');
+        }
+
+        $data = $request->validate([
+            'email' => ['required', 'email', 'max:191'],
+            'password' => ['nullable', 'string', 'min:6', 'max:100', 'confirmed'],
+        ]);
+        $email = strtolower(trim($data['email']));
+        if (DB::table('app_users')->where('email', $email)->where('id', '!=', $adminId)->exists()) {
+            return back()->withInput()->with('error', 'Another account already uses this email.');
+        }
+
+        $update = ['email' => $email, 'updated_at_ms' => $this->rbac->nowMs()];
+        if (!empty($data['password'])) {
+            $update['password_hash'] = Hash::make($data['password']);
+            DB::table('app_user_tokens')->where('user_id', $adminId)->delete();
+        }
+        DB::table('app_users')->where('id', $adminId)->update($update);
+        $request->session()->put('bm_admin_email', $email);
+
+        return redirect()->route('admin.settings')->with('success', 'Admin email/password updated successfully.');
+    }
+
     public function settings(Request $request): View
     {
+        $this->rbac->ensureSeeded();
         $businesses = $this->activeBusinesses();
         $selectedBizId = $this->selectedBusinessId($request);
         $activeTheme = $this->activeTheme($request, $businesses);
@@ -1066,11 +1230,13 @@ class AdminController extends Controller
 
         $apiBaseUrl = rtrim(url('/'), '/') . '/';
         $apiToken = (string) config('sync.api_token', '');
-        $adminEmail = (string) config('sync.admin_email', '');
+        $currentAdmin = DB::table('app_users')->where('id', $this->currentAdminId($request))->first();
+        $adminEmail = (string) ($currentAdmin->email ?? $request->session()->get('bm_admin_email', config('sync.admin_email', '')));
+        $adminName = (string) ($currentAdmin->name ?? $this->currentAdminName($request));
 
         return view('admin.settings', compact(
             'businesses', 'selectedBizId', 'activeTheme', 'stats', 'lastSyncMs',
-            'apiBaseUrl', 'apiToken', 'adminEmail'
+            'apiBaseUrl', 'apiToken', 'adminEmail', 'adminName'
         ));
     }
 
