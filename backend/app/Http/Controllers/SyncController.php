@@ -13,6 +13,11 @@ class SyncController extends Controller
     {
     }
 
+    private function nowMs(): int
+    {
+        return $this->rbac->nowMs();
+    }
+
     public function health(Request $request): JsonResponse
     {
         $auth = $this->rbac->authenticateApiRequest($request);
