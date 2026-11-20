@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.local.AppDatabase
 import com.example.data.local.AuthSession
 import com.example.data.local.BusinessEntity
+import com.example.data.local.CustomerEntity
 import com.example.data.local.ExpenseEntity
 import com.example.data.local.ExpiryStatus
 import com.example.data.local.InvoiceEntity
@@ -20,10 +21,14 @@ import com.example.data.local.PricingTier
 import com.example.data.local.ProductEntity
 import com.example.data.local.ServerSyncConfig
 import com.example.data.remote.CustomServerClientFactory
+import com.example.data.remote.TeamPermissionItemDto
+import com.example.data.remote.TeamRoleDto
+import com.example.data.remote.TeamUserDto
 import com.example.data.repository.HassanAgroRepository
 import com.example.util.CsvExporter
 import com.example.util.Formatters
 import com.example.util.InvoicePdfGenerator
+import com.example.util.InvoicePdfStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -82,9 +87,11 @@ data class HeldCart(
 )
 
 data class BillingDraftState(
+    val customerId: String = "",
     val customerName: String = "",
     val customerPhone: String = "",
     val customerEmail: String = "",
+    val saveCustomerToDirectory: Boolean = false,
     val pricingTier: PricingTier = PricingTier.RETAIL,
     val cartLines: List<BillingCartLine> = emptyList(),
     val discountText: String = "",
@@ -125,7 +132,19 @@ data class BillingDraftState(
 data class GeneratedInvoiceEvent(
     val business: BusinessEntity,
     val invoiceWithItems: InvoiceWithItems,
-    val pdfFile: File
+    val pdfFile: File,
+    val style: InvoicePdfStyle = InvoicePdfStyle.THERMAL_COUPON
+)
+
+data class TeamUiState(
+    val isLoading: Boolean = false,
+    val isSaving: Boolean = false,
+    val errorMessage: String? = null,
+    val businessId: String = "",
+    val businessName: String = "",
+    val roles: List<TeamRoleDto> = emptyList(),
+    val users: List<TeamUserDto> = emptyList(),
+    val permissionsCatalog: List<TeamPermissionItemDto> = emptyList()
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -168,6 +187,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     ) { list, activeId ->
         list.firstOrNull { it.id == activeId } ?: list.firstOrNull() ?: fallbackBusiness
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), fallbackBusiness)
+
+    val customers: StateFlow<List<CustomerEntity>> = activeBusiness
+        .flatMapLatest { repository.observeCustomers(it.id) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val products: StateFlow<List<ProductEntity>> = activeBusiness
         .flatMapLatest { repository.observeProducts(it.id) }
@@ -238,6 +261,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _generatedInvoice = MutableStateFlow<GeneratedInvoiceEvent?>(null)
     val generatedInvoice: StateFlow<GeneratedInvoiceEvent?> = _generatedInvoice.asStateFlow()
+
+    private val _teamState = MutableStateFlow(TeamUiState())
+    val teamState: StateFlow<TeamUiState> = _teamState.asStateFlow()
 
     private val _snackbarMessage = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val snackbarMessage: SharedFlow<String> = _snackbarMessage.asSharedFlow()
@@ -487,7 +513,56 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         return repository.findProductByBarcode(activeBusiness.value.id, barcode)
     }
 
+    // --- Customers Directory & Credit Ledger ---
+    fun saveCustomer(customer: CustomerEntity) {
+        viewModelScope.launch {
+            val bizId = activeBusiness.value.id
+            val actor = authSession.value
+            repository.saveCustomer(
+                customer = customer.copy(businessId = bizId),
+                performedById = actor.userId,
+                performedByName = actor.userName
+            )
+            emitMessage("Saved customer: ${customer.name}")
+            triggerAutoSyncIfEnabled()
+        }
+    }
+
+    fun deleteCustomer(customerId: String) {
+        viewModelScope.launch {
+            repository.deleteCustomer(customerId)
+            emitMessage("Customer removed")
+            triggerAutoSyncIfEnabled()
+        }
+    }
+
     // --- Billing & Invoicing ---
+    fun selectBillingCustomer(customer: CustomerEntity?) {
+        if (customer == null) {
+            _billingDraft.update { it.copy(customerId = "", saveCustomerToDirectory = false) }
+            return
+        }
+        val preferredTier = PricingTier.fromName(customer.pricingTier)
+        _billingDraft.update { draft ->
+            val repriced = draft.cartLines.map { line ->
+                line.copy(unitPrice = line.product.priceForTier(preferredTier))
+            }
+            draft.copy(
+                customerId = customer.id,
+                customerName = customer.name,
+                customerPhone = customer.phone,
+                customerEmail = customer.email,
+                saveCustomerToDirectory = false,
+                pricingTier = preferredTier,
+                cartLines = repriced
+            )
+        }
+    }
+
+    fun updateBillingSaveCustomer(save: Boolean) {
+        _billingDraft.update { it.copy(saveCustomerToDirectory = save) }
+    }
+
     fun updateBillingCustomer(name: String, phone: String, email: String) {
         _billingDraft.update { it.copy(customerName = name, customerPhone = phone, customerEmail = email) }
     }
@@ -608,13 +683,30 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val business = activeBusiness.value
             val actor = authSession.value
+            val cleanName = draft.customerName.trim()
+            var resolvedCustomerId = draft.customerId
+
+            // Auto-save walk-in customer to directory when toggled on
+            if (resolvedCustomerId.isBlank() && draft.saveCustomerToDirectory && cleanName.isNotBlank()) {
+                val newCustomer = CustomerEntity(
+                    businessId = business.id,
+                    name = cleanName,
+                    phone = draft.customerPhone.trim(),
+                    email = draft.customerEmail.trim(),
+                    pricingTier = draft.pricingTier.name
+                )
+                repository.saveCustomer(newCustomer, actor.userId, actor.userName)
+                resolvedCustomerId = newCustomer.id
+            }
+
             val invoiceNumber = repository.nextInvoiceNumber(business)
             val invoiceId = UUID.randomUUID().toString()
             val invoiceEntity = InvoiceEntity(
                 id = invoiceId,
                 businessId = business.id,
                 invoiceNumber = invoiceNumber,
-                customerName = draft.customerName.trim().ifBlank { "Walk-in Customer" },
+                customerId = resolvedCustomerId,
+                customerName = cleanName.ifBlank { "Walk-in Customer" },
                 customerPhone = draft.customerPhone.trim(),
                 customerEmail = draft.customerEmail.trim(),
                 pricingTier = draft.pricingTier.name,
@@ -651,11 +743,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 performedById = actor.userId,
                 performedByName = actor.userName
             )
+            val defaultStyle = InvoicePdfStyle.THERMAL_COUPON
             val pdfFile = withContext(Dispatchers.IO) {
-                InvoicePdfGenerator.generateInvoicePdf(getApplication(), business, saved)
+                InvoicePdfGenerator.generateInvoicePdf(getApplication(), business, saved, defaultStyle)
             }
             clearBillingDraft()
-            _generatedInvoice.value = GeneratedInvoiceEvent(business, saved, pdfFile)
+            _generatedInvoice.value = GeneratedInvoiceEvent(business, saved, pdfFile, defaultStyle)
             emitMessage("POS Sale $invoiceNumber completed by ${actor.userName.ifBlank { "Admin" }}")
             triggerAutoSyncIfEnabled()
         }
@@ -684,19 +777,148 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun openExistingInvoicePdf(invoiceWithItems: InvoiceWithItems) {
+    fun openExistingInvoicePdf(
+        invoiceWithItems: InvoiceWithItems,
+        style: InvoicePdfStyle = InvoicePdfStyle.THERMAL_COUPON
+    ) {
         viewModelScope.launch {
             val biz = businesses.value.firstOrNull { it.id == invoiceWithItems.invoice.businessId }
                 ?: activeBusiness.value
             val pdfFile = withContext(Dispatchers.IO) {
-                InvoicePdfGenerator.generateInvoicePdf(getApplication(), biz, invoiceWithItems)
+                InvoicePdfGenerator.generateInvoicePdf(getApplication(), biz, invoiceWithItems, style)
             }
-            _generatedInvoice.value = GeneratedInvoiceEvent(biz, invoiceWithItems, pdfFile)
+            _generatedInvoice.value = GeneratedInvoiceEvent(biz, invoiceWithItems, pdfFile, style)
+        }
+    }
+
+    fun switchGeneratedInvoiceStyle(style: InvoicePdfStyle) {
+        val current = _generatedInvoice.value ?: return
+        if (current.style == style) return
+        viewModelScope.launch {
+            val pdfFile = withContext(Dispatchers.IO) {
+                InvoicePdfGenerator.generateInvoicePdf(getApplication(), current.business, current.invoiceWithItems, style)
+            }
+            _generatedInvoice.value = current.copy(pdfFile = pdfFile, style = style)
         }
     }
 
     fun dismissGeneratedInvoice() {
         _generatedInvoice.value = null
+    }
+
+    // --- Business Team & Custom Roles (Business Owner In-App Management) ---
+    fun loadTeamOverview() {
+        val bizId = activeBusiness.value.id
+        if (bizId.isBlank()) return
+        viewModelScope.launch {
+            _teamState.update { it.copy(isLoading = true, errorMessage = null) }
+            repository.fetchTeamOverview(bizId).onSuccess { resp ->
+                _teamState.value = TeamUiState(
+                    isLoading = false,
+                    businessId = resp.businessId,
+                    businessName = resp.businessName,
+                    roles = resp.roles,
+                    users = resp.users,
+                    permissionsCatalog = resp.permissionsCatalog
+                )
+            }.onFailure { err ->
+                _teamState.update { it.copy(isLoading = false, errorMessage = err.localizedMessage ?: "Unable to load team") }
+            }
+        }
+    }
+
+    fun saveTeamRole(
+        roleId: String?,
+        name: String,
+        description: String,
+        permissions: List<String>,
+        onSuccess: () -> Unit = {}
+    ) {
+        val bizId = activeBusiness.value.id
+        viewModelScope.launch {
+            _teamState.update { it.copy(isSaving = true, errorMessage = null) }
+            repository.saveTeamRole(roleId, bizId, name, description, permissions).onSuccess { msg ->
+                _teamState.update { it.copy(isSaving = false) }
+                emitMessage(msg)
+                onSuccess()
+                loadTeamOverview()
+            }.onFailure { err ->
+                val msg = err.localizedMessage ?: "Could not save role"
+                _teamState.update { it.copy(isSaving = false, errorMessage = msg) }
+                emitMessage(msg)
+            }
+        }
+    }
+
+    fun deleteTeamRole(roleId: String) {
+        val bizId = activeBusiness.value.id
+        viewModelScope.launch {
+            repository.deleteTeamRole(roleId, bizId).onSuccess { msg ->
+                emitMessage(msg)
+                loadTeamOverview()
+            }.onFailure { err ->
+                emitMessage(err.localizedMessage ?: "Could not delete role")
+            }
+        }
+    }
+
+    fun saveTeamUser(
+        userId: String?,
+        name: String,
+        email: String,
+        password: String,
+        roleId: String,
+        customRoleName: String = "",
+        customPermissions: List<String>? = null,
+        onSuccess: () -> Unit = {}
+    ) {
+        val bizId = activeBusiness.value.id
+        viewModelScope.launch {
+            _teamState.update { it.copy(isSaving = true, errorMessage = null) }
+            repository.saveTeamUser(
+                userId = userId,
+                businessId = bizId,
+                name = name,
+                email = email,
+                password = password,
+                roleId = roleId,
+                customRoleName = customRoleName,
+                customPermissions = customPermissions
+            ).onSuccess { msg ->
+                _teamState.update { it.copy(isSaving = false) }
+                emitMessage(msg)
+                onSuccess()
+                loadTeamOverview()
+            }.onFailure { err ->
+                val msg = err.localizedMessage ?: "Could not save team member"
+                _teamState.update { it.copy(isSaving = false, errorMessage = msg) }
+                emitMessage(msg)
+            }
+        }
+    }
+
+    fun toggleTeamUser(userId: String) {
+        val bizId = activeBusiness.value.id
+        viewModelScope.launch {
+            repository.toggleTeamUser(userId, bizId).onSuccess { msg ->
+                emitMessage(msg)
+                loadTeamOverview()
+            }.onFailure { err ->
+                emitMessage(err.localizedMessage ?: "Failed to update user status")
+            }
+        }
+    }
+
+    fun deleteTeamUser(userId: String) {
+        val bizId = activeBusiness.value.id
+        viewModelScope.launch {
+            repository.deleteTeamUser(userId, bizId).onSuccess { msg ->
+                emitMessage(msg)
+                loadTeamOverview()
+            }.onFailure { err ->
+                emitMessage(err.localizedMessage ?: "Failed to remove user")
+            }
+        }
     }
 
     // --- Expenses ---

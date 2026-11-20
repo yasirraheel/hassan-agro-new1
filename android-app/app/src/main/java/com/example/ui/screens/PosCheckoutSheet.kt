@@ -2,6 +2,9 @@ package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -10,26 +13,34 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.PauseCircleOutline
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -38,6 +49,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -50,30 +64,41 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.local.BusinessEntity
+import com.example.data.local.CustomerEntity
 import com.example.data.local.ExpiryStatus
 import com.example.data.local.InvoicePaymentStatus
 import com.example.data.local.InvoiceWithItems
 import com.example.data.local.PricingTier
 import com.example.ui.components.AgriFilterChip
+import com.example.ui.components.CompactSearchBar
 import com.example.ui.components.FormScreenDialog
 import com.example.ui.components.PerformedByPill
 import com.example.ui.theme.ExpiredCrimson
 import com.example.ui.theme.ExpiringSoonAmber
 import com.example.ui.theme.ExpiringSoonBg
+import com.example.ui.theme.MonoCodeSmall
 import com.example.ui.theme.MonoFigureLarge
 import com.example.ui.theme.MonoFigureMedium
 import com.example.ui.theme.SafeStockBg
 import com.example.ui.theme.SafeStockGreen
 import com.example.ui.theme.WhatsAppGreen
 import com.example.util.Formatters
+import com.example.util.InvoicePdfStyle
 import com.example.util.ShareHelper
 import com.example.viewmodel.BillingCartLine
 import com.example.viewmodel.BillingDraftState
@@ -85,6 +110,10 @@ import kotlin.math.ceil
 fun PosCheckoutSheet(
     business: BusinessEntity,
     draft: BillingDraftState,
+    customers: List<CustomerEntity>,
+    invoices: List<InvoiceWithItems>,
+    onSelectSavedCustomer: (CustomerEntity?) -> Unit,
+    onToggleSaveCustomer: (Boolean) -> Unit,
     onUpdateCustomer: (String, String, String) -> Unit,
     onSelectTier: (PricingTier) -> Unit,
     onUpdateTax: (Boolean, String) -> Unit,
@@ -100,6 +129,14 @@ fun PosCheckoutSheet(
     val currency = business.resolvedCurrency()
     val paymentMethods = remember(business.paymentMethodsJson, business.businessType) {
         business.paymentMethods()
+    }
+    val taxPresets = remember(business.taxPresetsJson) {
+        business.taxPresets()
+    }
+    var showCustomerPicker by remember { mutableStateOf(false) }
+
+    val selectedCustomer = remember(draft.customerId, customers) {
+        customers.firstOrNull { it.id == draft.customerId }
     }
 
     FormScreenDialog(
@@ -150,7 +187,7 @@ fun PosCheckoutSheet(
                 ) {
                     Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Complete Sale & Generate Invoice", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                    Text("Complete Sale & Generate Receipt", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -174,6 +211,70 @@ fun PosCheckoutSheet(
                     onClick = { onSelectTier(tier) },
                     label = business.tierLabel(tier)
                 )
+            }
+        }
+
+        // Saved Customer Picker Bar
+        Surface(
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showCustomerPicker = true }
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                    .testTag("pos_select_saved_customer_btn"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        Icons.Default.People,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = if (selectedCustomer != null) "Saved Customer: ${selectedCustomer.name}" else "Select Saved Customer",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = if (selectedCustomer != null)
+                                "${selectedCustomer.phone.ifBlank { "No phone" }} • ${business.tierLabel(PricingTier.fromName(selectedCustomer.pricingTier))} tier"
+                            else
+                                "${customers.size} saved customers • auto-fills phone & tier",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                if (selectedCustomer != null) {
+                    IconButton(
+                        onClick = { onSelectSavedCustomer(null) },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "Unlink customer", modifier = Modifier.size(18.dp))
+                    }
+                } else {
+                    Text(
+                        text = "Pick",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
 
@@ -206,6 +307,26 @@ fun PosCheckoutSheet(
             )
         }
 
+        if (draft.customerId.isBlank() && draft.customerName.isNotBlank()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onToggleSaveCustomer(!draft.saveCustomerToDirectory) },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Checkbox(
+                    checked = draft.saveCustomerToDirectory,
+                    onCheckedChange = onToggleSaveCustomer,
+                    modifier = Modifier.testTag("pos_save_new_customer_checkbox")
+                )
+                Text(
+                    text = "Save \"${draft.customerName.trim()}\" to Customer Directory",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+
         Surface(
             shape = MaterialTheme.shapes.medium,
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
@@ -223,23 +344,43 @@ fun PosCheckoutSheet(
                     Switch(
                         checked = draft.taxEnabled,
                         onCheckedChange = { enabled ->
-                            val rate = if (enabled && (draft.taxRateText.toDoubleOrNull() ?: 0.0) == 0.0) "18" else draft.taxRateText
+                            val firstNonZero = taxPresets.firstOrNull { it.rate > 0.0 }?.rate ?: 18.0
+                            val rate = if (enabled && (draft.taxRateText.toDoubleOrNull() ?: 0.0) == 0.0) {
+                                Formatters.formatDecimal(firstNonZero)
+                            } else draft.taxRateText
                             onUpdateTax(enabled, rate)
                         },
                         modifier = Modifier.testTag("billing_tax_switch")
                     )
                 }
                 AnimatedVisibility(visible = draft.taxEnabled) {
-                    OutlinedTextField(
-                        value = draft.taxRateText,
-                        onValueChange = { onUpdateTax(true, it) },
-                        label = { Text("Tax Rate (%)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("billing_tax_rate_input")
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (taxPresets.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                taxPresets.filter { it.rate > 0.0 }.forEach { preset ->
+                                    val presetRateStr = Formatters.formatDecimal(preset.rate)
+                                    AgriFilterChip(
+                                        selected = (draft.taxRateText.toDoubleOrNull() ?: -1.0) == preset.rate,
+                                        onClick = { onUpdateTax(true, presetRateStr) },
+                                        label = preset.displayLabel
+                                    )
+                                }
+                            }
+                        }
+                        OutlinedTextField(
+                            value = draft.taxRateText,
+                            onValueChange = { onUpdateTax(true, it) },
+                            label = { Text("Tax Rate (%)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("billing_tax_rate_input")
+                        )
+                    }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
@@ -375,6 +516,131 @@ fun PosCheckoutSheet(
             CheckoutSummaryRow("Tax (${draft.taxRatePercent}%)", Formatters.formatPkr(draft.taxAmount, currency))
         }
         Spacer(Modifier.height(12.dp))
+    }
+
+    if (showCustomerPicker) {
+        CustomerPickerBottomSheet(
+            business = business,
+            customers = customers,
+            invoices = invoices,
+            selectedCustomerId = draft.customerId,
+            onPick = { customer ->
+                onSelectSavedCustomer(customer)
+                showCustomerPicker = false
+            },
+            onDismiss = { showCustomerPicker = false }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CustomerPickerBottomSheet(
+    business: BusinessEntity,
+    customers: List<CustomerEntity>,
+    invoices: List<InvoiceWithItems>,
+    selectedCustomerId: String,
+    onPick: (CustomerEntity) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val currency = business.resolvedCurrency()
+    var query by remember { mutableStateOf("") }
+    val filtered = remember(customers, query) {
+        customers.filter { c ->
+            query.isBlank() ||
+                c.name.contains(query, ignoreCase = true) ||
+                c.phone.contains(query, ignoreCase = true)
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text("Select Saved Customer", style = MaterialTheme.typography.titleLarge)
+            CompactSearchBar(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = "Search name or phone...",
+                testTagName = "customer_picker_search"
+            )
+            if (filtered.isEmpty()) {
+                Text(
+                    text = if (customers.isEmpty()) "No saved customers yet. Add them in the Customers tab or type a walk-in name and check \"Save to Customer Directory\"."
+                    else "No customers match \"$query\".",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 12.dp)
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 360.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(filtered, key = { it.id }) { customer ->
+                        val (_, due) = remember(customer, invoices) { computeCustomerStats(customer, invoices) }
+                        val isSelected = customer.id == selectedCustomerId
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onPick(customer) },
+                            shape = MaterialTheme.shapes.medium,
+                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                            else MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(
+                                width = if (isSelected) 1.5.dp else 1.dp,
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = customer.name,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = listOf(
+                                            customer.phone.ifBlank { "No phone" },
+                                            business.tierLabel(PricingTier.fromName(customer.pricingTier))
+                                        ).joinToString(" • "),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                if (due > 0.01) {
+                                    Surface(shape = RoundedCornerShape(6.dp), color = ExpiringSoonBg) {
+                                        Text(
+                                            text = "Due ${Formatters.formatCompactPkr(due, currency)}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = ExpiringSoonAmber,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -626,9 +892,11 @@ fun ReturnSaleConfirmDialog(
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InvoiceShareDialog(
     event: GeneratedInvoiceEvent,
+    onSwitchStyle: (InvoicePdfStyle) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -639,36 +907,92 @@ fun InvoiceShareDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        icon = {
-            Icon(
-                Icons.Default.CheckCircle,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(36.dp)
-            )
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = if (event.style == InvoicePdfStyle.THERMAL_COUPON) Icons.Default.Receipt else Icons.Default.PictureAsPdf,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Text("Receipt & Invoice Ready", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         },
-        title = { Text("Sale Completed & Invoice Ready") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "${biz.name} • #${inv.invoiceNumber}",
-                    style = MaterialTheme.typography.titleMedium
-                )
-                PerformedByPill(name = inv.performedByName)
-                Text(
-                    text = buildString {
-                        append("Customer: ${inv.customerName}\n")
-                        append("Total: ${Formatters.formatPkr(inv.grandTotal, currency)} • ${inv.paymentMethod}\n")
-                        if (inv.balanceDue > 0.01 && !inv.isReturned) {
-                            append("Paid: ${Formatters.formatPkr(inv.amountPaid, currency)} | Credit Due: ${Formatters.formatPkr(inv.balanceDue, currency)}")
-                        } else {
-                            append("Status: ${InvoicePaymentStatus.fromName(inv.paymentStatus).label}")
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Style Toggle: 80mm Thermal Coupon vs Ultra-Minimal Compact A4 PDF
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    SegmentedButton(
+                        selected = event.style == InvoicePdfStyle.THERMAL_COUPON,
+                        onClick = { onSwitchStyle(InvoicePdfStyle.THERMAL_COUPON) },
+                        shape = SegmentedButtonDefaults.itemShape(0, 2),
+                        modifier = Modifier.testTag("invoice_style_thermal")
+                    ) {
+                        Text("Thermal Receipt", maxLines = 1, softWrap = false, fontSize = 12.sp)
+                    }
+                    SegmentedButton(
+                        selected = event.style == InvoicePdfStyle.MINIMAL_A4,
+                        onClick = { onSwitchStyle(InvoicePdfStyle.MINIMAL_A4) },
+                        shape = SegmentedButtonDefaults.itemShape(1, 2),
+                        modifier = Modifier.testTag("invoice_style_minimal_a4")
+                    ) {
+                        Text("Minimal PDF", maxLines = 1, softWrap = false, fontSize = 12.sp)
+                    }
+                }
+
+                if (event.style == InvoicePdfStyle.THERMAL_COUPON) {
+                    ThermalReceiptPreviewCard(
+                        business = biz,
+                        invoiceWithItems = event.invoiceWithItems
+                    )
+                } else {
+                    Surface(
+                        shape = MaterialTheme.shapes.medium,
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Text(
+                                text = "${biz.name} • #${inv.invoiceNumber}",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            PerformedByPill(name = inv.performedByName)
+                            Text(
+                                text = buildString {
+                                    append("Customer: ${inv.customerName}\n")
+                                    append("Items: ${event.invoiceWithItems.items.sumOf { it.quantity }} units • ${inv.paymentMethod}\n")
+                                    append("Total: ${Formatters.formatPkr(inv.grandTotal, currency)}")
+                                    if (inv.balanceDue > 0.01 && !inv.isReturned) {
+                                        append("\nPaid: ${Formatters.formatPkr(inv.amountPaid, currency)} | Due: ${Formatters.formatPkr(inv.balanceDue, currency)}")
+                                    } else {
+                                        append(" (${InvoicePaymentStatus.fromName(inv.paymentStatus).label})")
+                                    }
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "Sleek compact A4 PDF with clean hairline dividers.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
                         }
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(6.dp))
+                    }
+                }
+
                 Button(
                     onClick = { ShareHelper.sharePdfOnWhatsApp(context, event.pdfFile, caption) },
                     colors = ButtonDefaults.buttonColors(containerColor = WhatsAppGreen),
@@ -680,41 +1004,48 @@ fun InvoiceShareDialog(
                     Spacer(Modifier.width(8.dp))
                     Text("Send via WhatsApp", maxLines = 1, softWrap = false)
                 }
-                OutlinedButton(
-                    onClick = {
-                        ShareHelper.sharePdfViaEmail(
-                            context = context,
-                            pdfFile = event.pdfFile,
-                            recipientEmail = inv.customerEmail,
-                            subject = "Invoice #${inv.invoiceNumber} — ${biz.name}",
-                            body = "Dear ${inv.customerName},\n\nPlease find attached your sales invoice #${inv.invoiceNumber} totaling ${Formatters.formatPkr(inv.grandTotal, currency)}.\n\nRegards,\n${biz.name}"
-                        )
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("share_email_button")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(Icons.Default.Email, contentDescription = stringResource(R.string.cd_share_email), modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Send via Email", maxLines = 1, softWrap = false)
-                }
-                OutlinedButton(
-                    onClick = {
-                        ShareHelper.shareFileGeneric(
-                            context = context,
-                            file = event.pdfFile,
-                            mimeType = "application/pdf",
-                            chooserTitle = "Share Invoice PDF",
-                            extraText = caption
-                        )
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("share_pdf_generic_button")
-                ) {
-                    Icon(Icons.Default.PictureAsPdf, contentDescription = stringResource(R.string.cd_share_pdf), modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Share / Print PDF", maxLines = 1, softWrap = false)
+                    OutlinedButton(
+                        onClick = {
+                            ShareHelper.sharePdfViaEmail(
+                                context = context,
+                                pdfFile = event.pdfFile,
+                                recipientEmail = inv.customerEmail,
+                                subject = "Invoice #${inv.invoiceNumber} — ${biz.name}",
+                                body = "Dear ${inv.customerName},\n\nPlease find attached your receipt #${inv.invoiceNumber} totaling ${Formatters.formatPkr(inv.grandTotal, currency)}.\n\nRegards,\n${biz.name}"
+                            )
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("share_email_button")
+                    ) {
+                        Icon(Icons.Default.Email, contentDescription = stringResource(R.string.cd_share_email), modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Email", maxLines = 1, softWrap = false)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            ShareHelper.shareFileGeneric(
+                                context = context,
+                                file = event.pdfFile,
+                                mimeType = "application/pdf",
+                                chooserTitle = "Share / Print Receipt PDF",
+                                extraText = caption
+                            )
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        modifier = Modifier
+                            .weight(1.3f)
+                            .testTag("share_pdf_generic_button")
+                    ) {
+                        Icon(Icons.Default.PictureAsPdf, contentDescription = stringResource(R.string.cd_share_pdf), modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Print / Share", maxLines = 1, softWrap = false)
+                    }
                 }
             }
         },
@@ -722,4 +1053,184 @@ fun InvoiceShareDialog(
             TextButton(onClick = onDismiss) { Text("Done") }
         }
     )
+}
+
+@Composable
+private fun ThermalReceiptPreviewCard(
+    business: BusinessEntity,
+    invoiceWithItems: InvoiceWithItems
+) {
+    val inv = invoiceWithItems.invoice
+    val currency = business.resolvedCurrency()
+    val paperBg = Color(0xFFFFFDF8)
+    val inkColor = Color(0xFF1A1C1E)
+    val mutedInk = Color(0xFF55595E)
+    val borderColor = Color(0xFFD5D7DB)
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(paperBg, RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp))
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            Text(
+                text = business.name.uppercase(),
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+                color = inkColor,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (business.phone.isNotBlank()) {
+                Text(
+                    text = "Tel: ${business.phone}",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                    color = mutedInk,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            Text(
+                text = "- - - - - - - - - - - - - - - - - -",
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                color = mutedInk,
+                maxLines = 1,
+                overflow = TextOverflow.Clip,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+            ThermalPreviewLine("BILL #", inv.invoiceNumber, inkColor, bold = true)
+            ThermalPreviewLine("DATE", Formatters.formatDateTime(inv.createdAt), mutedInk)
+            ThermalPreviewLine("CUST", inv.customerName, inkColor)
+            ThermalPreviewLine("BY", inv.performedByName.ifBlank { "Admin" }, mutedInk)
+            Text(
+                text = "- - - - - - - - - - - - - - - - - -",
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                color = mutedInk,
+                maxLines = 1,
+                overflow = TextOverflow.Clip,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+            invoiceWithItems.items.forEach { item ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "${item.quantity}x ${item.productName}",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.5.sp,
+                        color = inkColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = Formatters.formatDecimal(item.lineTotal),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.5.sp,
+                        color = inkColor,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
+            Text(
+                text = "= = = = = = = = = = = = = = = = = =",
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                color = inkColor,
+                maxLines = 1,
+                overflow = TextOverflow.Clip,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+            ThermalPreviewLine("TOTAL", Formatters.formatPkr(inv.grandTotal, currency), inkColor, bold = true)
+            ThermalPreviewLine("PAID (${inv.paymentMethod})", Formatters.formatPkr(inv.amountPaid, currency), mutedInk)
+            if (!inv.isReturned && inv.balanceDue > 0.01) {
+                ThermalPreviewLine("CREDIT DUE", Formatters.formatPkr(inv.balanceDue, currency), ExpiredCrimson, bold = true)
+            }
+            Text(
+                text = business.invoiceFooter.ifBlank { "Thank you for your business!" },
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.5.sp,
+                color = mutedInk,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp)
+            )
+        }
+        // Serrated / Zig-Zag Coupon Torn Bottom Edge
+        Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(10.dp)
+        ) {
+            val toothW = 14f
+            val toothH = size.height
+            val fillPath = Path().apply {
+                moveTo(0f, 0f)
+                lineTo(size.width, 0f)
+                var x = size.width
+                while (x > 0f) {
+                    val mid = (x - toothW / 2f).coerceAtLeast(0f)
+                    val next = (x - toothW).coerceAtLeast(0f)
+                    lineTo(mid, toothH)
+                    lineTo(next, 0f)
+                    x = next
+                }
+                close()
+            }
+            drawPath(path = fillPath, color = paperBg)
+            val edgePath = Path().apply {
+                moveTo(0f, 0f)
+                var x = 0f
+                while (x < size.width) {
+                    val mid = (x + toothW / 2f).coerceAtMost(size.width)
+                    val next = (x + toothW).coerceAtMost(size.width)
+                    lineTo(mid, toothH)
+                    lineTo(next, 0f)
+                    x = next
+                }
+            }
+            drawPath(path = edgePath, color = borderColor, style = Stroke(width = 1.5f))
+        }
+    }
+}
+
+@Composable
+private fun ThermalPreviewLine(label: String, value: String, color: Color, bold: Boolean = false) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = label,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+            fontSize = 10.sp,
+            color = color,
+            maxLines = 1,
+            softWrap = false
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = value,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+            fontSize = 10.sp,
+            color = color,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
 }

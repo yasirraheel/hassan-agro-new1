@@ -36,6 +36,12 @@ Route::prefix('admin')->name('admin.')->group(function () {
         Route::post('/invoices/{id}/collect', [AdminController::class, 'collectCredit'])->name('invoices.collect');
         Route::post('/invoices/{id}/return', [AdminController::class, 'returnInvoice'])->name('invoices.return');
 
+        // Customers & Credit (Udhaar) Directory
+        Route::get('/customers', [AdminController::class, 'customers'])->name('customers');
+        Route::post('/customers', [AdminController::class, 'storeCustomer'])->name('customers.store');
+        Route::put('/customers/{id}', [AdminController::class, 'updateCustomer'])->name('customers.update');
+        Route::delete('/customers/{id}', [AdminController::class, 'deleteCustomer'])->name('customers.delete');
+
         // Expenses
         Route::get('/expenses', [AdminController::class, 'expenses'])->name('expenses');
         Route::post('/expenses', [AdminController::class, 'storeExpense'])->name('expenses.store');

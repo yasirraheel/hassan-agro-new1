@@ -24,6 +24,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddBox
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -39,6 +40,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -58,6 +60,7 @@ import com.example.data.local.BusinessEntity
 import com.example.data.local.ExpiryStatus
 import com.example.data.local.PricingTier
 import com.example.data.local.ProductEntity
+import com.example.data.local.calculateSuggestedTierPrices
 import com.example.ui.components.AgriFilterChip
 import com.example.ui.components.AppDatePickerDialog
 import com.example.ui.components.CompactSearchBar
@@ -68,6 +71,8 @@ import com.example.ui.components.PerformedByPill
 import com.example.ui.theme.ExpiredCrimson
 import com.example.ui.theme.MonoCodeSmall
 import com.example.ui.theme.MonoFigureMedium
+import com.example.ui.theme.SafeStockBg
+import com.example.ui.theme.SafeStockGreen
 import com.example.util.Formatters
 import com.example.viewmodel.InventoryFilter
 import java.util.concurrent.TimeUnit
@@ -478,6 +483,8 @@ private fun ProductEditorDialog(
     val categories = remember(business.productCategoriesJson, business.businessType) {
         business.productCategories()
     }
+    val taxPresets = remember(business.taxPresetsJson) { business.taxPresets() }
+    val pricingRules = remember(business.pricingRulesJson) { business.pricingRules() }
     val currency = business.resolvedCurrency()
 
     var name by remember { mutableStateOf(existing?.name ?: "") }
@@ -494,8 +501,53 @@ private fun ProductEditorDialog(
     var distPrice by remember { mutableStateOf(existing?.distributorPrice?.takeIf { it > 0 }?.toString() ?: "") }
     var whlsPrice by remember { mutableStateOf(existing?.wholesalerPrice?.takeIf { it > 0 }?.toString() ?: "") }
     var retailPrice by remember { mutableStateOf(existing?.retailPrice?.takeIf { it > 0 }?.toString() ?: "") }
+
+    // Smart Pricing Calculator state (Tax Preset + Owner Margin -> Auto-suggested 4 tiers)
+    var selectedTaxPercent by remember { mutableStateOf(0.0) }
+    var taxIncludedInCost by remember { mutableStateOf(false) }
+    var marginMode by remember { mutableStateOf(pricingRules.ownerMarginMode) }
+    var ownerMarginText by remember { mutableStateOf(Formatters.formatDecimal(pricingRules.ownerMarginValue)) }
+    var manualMrp by remember { mutableStateOf(existing != null) }
+    var manualDist by remember { mutableStateOf(existing != null) }
+    var manualWhls by remember { mutableStateOf(existing != null) }
+    var manualRetail by remember { mutableStateOf(existing != null) }
+
     var showDatePicker by remember { mutableStateOf(false) }
     var validationError by remember { mutableStateOf<String?>(null) }
+
+    fun computeLiveSuggestion(): com.example.data.local.SuggestedTierPrices {
+        val rawCost = purchasePrice.toDoubleOrNull() ?: 0.0
+        val marginVal = ownerMarginText.toDoubleOrNull() ?: 0.0
+        return calculateSuggestedTierPrices(
+            purchasePrice = rawCost,
+            taxRatePercent = selectedTaxPercent,
+            taxIncludedInCost = taxIncludedInCost,
+            marginMode = marginMode,
+            marginValue = marginVal,
+            rules = pricingRules
+        )
+    }
+
+    fun applyAutoSuggestions(forceAll: Boolean = false) {
+        val suggested = computeLiveSuggestion()
+        if (suggested.landedCost <= 0.0) return
+        if (forceAll || !manualMrp) {
+            mrpPrice = Formatters.formatDecimal(suggested.mrpPrice)
+            if (forceAll) manualMrp = false
+        }
+        if (forceAll || !manualDist) {
+            distPrice = Formatters.formatDecimal(suggested.distributorPrice)
+            if (forceAll) manualDist = false
+        }
+        if (forceAll || !manualWhls) {
+            whlsPrice = Formatters.formatDecimal(suggested.wholesalerPrice)
+            if (forceAll) manualWhls = false
+        }
+        if (forceAll || !manualRetail) {
+            retailPrice = Formatters.formatDecimal(suggested.retailPrice)
+            if (forceAll) manualRetail = false
+        }
+    }
 
     FormScreenDialog(
         title = if (existing == null) "Add Product" else "Edit Product",
@@ -649,15 +701,174 @@ private fun ProductEditorDialog(
 
         OutlinedTextField(
             value = purchasePrice,
-            onValueChange = { purchasePrice = it },
+            onValueChange = {
+                purchasePrice = it
+                applyAutoSuggestions(forceAll = false)
+            },
             label = { Text("Purchase / Cost Price ($currency)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             singleLine = true,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("product_purchase_price_input")
         )
 
+        // Smart Tax & Owner Margin Calculator Card
+        val liveSuggestion = computeLiveSuggestion()
+        Surface(
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.AutoFixHigh,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "Smart Cost, Tax & Margin Calculator",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    TextButton(
+                        onClick = { applyAutoSuggestions(forceAll = true) },
+                        enabled = (purchasePrice.toDoubleOrNull() ?: 0.0) > 0.0,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                        modifier = Modifier
+                            .height(30.dp)
+                            .testTag("recalculate_tiers_button")
+                    ) {
+                        Text("Recalculate", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+
+                Text(
+                    text = "Purchase Tax Preset",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    taxPresets.forEach { preset ->
+                        AgriFilterChip(
+                            selected = selectedTaxPercent == preset.rate,
+                            onClick = {
+                                selectedTaxPercent = preset.rate
+                                applyAutoSuggestions(forceAll = false)
+                            },
+                            label = preset.displayLabel
+                        )
+                    }
+                }
+
+                if (selectedTaxPercent > 0.0) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        AgriFilterChip(
+                            selected = !taxIncludedInCost,
+                            onClick = {
+                                taxIncludedInCost = false
+                                applyAutoSuggestions(forceAll = false)
+                            },
+                            label = "Tax Excluded (+${Formatters.formatDecimal(selectedTaxPercent)}%)"
+                        )
+                        AgriFilterChip(
+                            selected = taxIncludedInCost,
+                            onClick = {
+                                taxIncludedInCost = true
+                                applyAutoSuggestions(forceAll = false)
+                            },
+                            label = "Already Included"
+                        )
+                    }
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AgriFilterChip(
+                        selected = marginMode == "PERCENT",
+                        onClick = {
+                            marginMode = "PERCENT"
+                            applyAutoSuggestions(forceAll = false)
+                        },
+                        label = "Profit %"
+                    )
+                    AgriFilterChip(
+                        selected = marginMode == "FLAT",
+                        onClick = {
+                            marginMode = "FLAT"
+                            applyAutoSuggestions(forceAll = false)
+                        },
+                        label = "Flat $currency"
+                    )
+                    OutlinedTextField(
+                        value = ownerMarginText,
+                        onValueChange = {
+                            ownerMarginText = it
+                            applyAutoSuggestions(forceAll = false)
+                        },
+                        label = {
+                            Text(
+                                if (marginMode == "FLAT") "Min Profit ($currency)" else "Min Margin (%)",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("owner_margin_input")
+                    )
+                }
+
+                if (liveSuggestion.landedCost > 0.0) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = SafeStockBg
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Landed Cost: ${Formatters.formatPkr(liveSuggestion.landedCost, currency)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SafeStockGreen,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Floor: ${Formatters.formatPkr(liveSuggestion.baseFloorPrice, currency)}",
+                                style = MonoCodeSmall,
+                                color = SafeStockGreen,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         Text(
-            text = "Selling Prices ($currency)",
+            text = "Selling Prices ($currency) — Auto-suggested & Editable",
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.primary
         )
@@ -665,7 +876,10 @@ private fun ProductEditorDialog(
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(
                 value = mrpPrice,
-                onValueChange = { mrpPrice = it },
+                onValueChange = {
+                    mrpPrice = it
+                    manualMrp = true
+                },
                 label = { Text(business.tierLabel(PricingTier.MRP), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
@@ -675,7 +889,10 @@ private fun ProductEditorDialog(
             )
             OutlinedTextField(
                 value = distPrice,
-                onValueChange = { distPrice = it },
+                onValueChange = {
+                    distPrice = it
+                    manualDist = true
+                },
                 label = { Text(business.tierLabel(PricingTier.DISTRIBUTOR), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
@@ -688,7 +905,10 @@ private fun ProductEditorDialog(
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(
                 value = whlsPrice,
-                onValueChange = { whlsPrice = it },
+                onValueChange = {
+                    whlsPrice = it
+                    manualWhls = true
+                },
                 label = { Text(business.tierLabel(PricingTier.WHOLESALER), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
@@ -698,7 +918,10 @@ private fun ProductEditorDialog(
             )
             OutlinedTextField(
                 value = retailPrice,
-                onValueChange = { retailPrice = it },
+                onValueChange = {
+                    retailPrice = it
+                    manualRetail = true
+                },
                 label = { Text(business.tierLabel(PricingTier.RETAIL), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,

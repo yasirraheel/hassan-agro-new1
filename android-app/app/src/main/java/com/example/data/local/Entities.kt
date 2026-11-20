@@ -98,6 +98,8 @@ data class BusinessEntity(
     val expenseCategoriesJson: String = "",
     val paymentMethodsJson: String = "",
     val pricingTierLabelsJson: String = "",
+    val taxPresetsJson: String = "",
+    val pricingRulesJson: String = "",
     val defaultTaxRate: Double = 0.0,
     val invoiceFooter: String = "Thank you for your business!",
     val logoFilePath: String? = null,
@@ -129,8 +131,38 @@ data class BusinessEntity(
         return map[tier.name] ?: tier.label
     }
 
+    fun taxPresets(): List<TaxPreset> = CustomizationJson.decodeTaxPresets(taxPresetsJson)
+
+    fun pricingRules(): PricingMarginRules = CustomizationJson.decodePricingRules(pricingRulesJson)
+
     fun resolvedCurrency(): String = currencySymbol.trim().ifBlank { "Rs." }
 }
+
+@Entity(
+    tableName = "customers",
+    indices = [
+        Index(value = ["businessId"]),
+        Index(value = ["businessId", "phone"])
+    ]
+)
+data class CustomerEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val businessId: String,
+    val name: String,
+    val phone: String = "",
+    val email: String = "",
+    val address: String = "",
+    val pricingTier: String = PricingTier.RETAIL.name,
+    val creditLimit: Double = 0.0,
+    val openingBalance: Double = 0.0,
+    val notes: String = "",
+    val performedById: String = "",
+    val performedByName: String = "",
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
+    val isDeleted: Boolean = false,
+    val syncStatus: String = SyncStatus.PENDING.name
+)
 
 @Entity(
     tableName = "products",
@@ -190,6 +222,7 @@ data class InvoiceEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     val businessId: String,
     val invoiceNumber: String,
+    val customerId: String = "",
     val customerName: String,
     val customerPhone: String = "",
     val customerEmail: String = "",

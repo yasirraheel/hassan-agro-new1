@@ -8,6 +8,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\View\View;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -314,6 +315,10 @@ class AdminController extends Controller
             'is_active' => true,
             'updated_at_ms' => $now,
         ];
+        $ownerName = trim((string) ($data['owner_name'] ?? ''));
+        if ($ownerName !== '') {
+            $update['name'] = $ownerName;
+        }
         if ($ownerEmail !== '') {
             $update['email'] = $ownerEmail;
         }
@@ -771,6 +776,160 @@ class AdminController extends Controller
         return back()->with('success', 'Sale returned, stock restored, and synced.');
     }
 
+    // ---------- Customers & Credit (Udhaar) Directory ----------
+
+    public function customers(Request $request): View
+    {
+        $businesses = $this->activeBusinesses();
+        $bizMap = $businesses->keyBy('id');
+        $selectedBizId = $this->selectedBusinessId($request);
+        $activeTheme = $this->activeTheme($request, $businesses);
+        $search = trim((string) $request->query('q', ''));
+
+        if (!Schema::hasTable('customers')) {
+            $customers = collect();
+            $totalOutstanding = 0.0;
+            $totalBilled = 0.0;
+            $customersWithDue = 0;
+            return view('admin.customers', compact(
+                'businesses', 'bizMap', 'selectedBizId', 'activeTheme',
+                'customers', 'search', 'totalOutstanding', 'totalBilled', 'customersWithDue'
+            ));
+        }
+
+        $query = DB::table('customers')->where('is_deleted', false);
+        if ($selectedBizId !== '') {
+            $query->where('business_id', $selectedBizId);
+        }
+        if ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('phone', 'like', "%{$search}%")
+                    ->orWhere('address', 'like', "%{$search}%");
+            });
+        }
+
+        $rawCustomers = $query->orderBy('name')->get();
+        $invQuery = DB::table('invoices')->where('is_deleted', false)->where('is_returned', false);
+        if ($selectedBizId !== '') {
+            $invQuery->where('business_id', $selectedBizId);
+        }
+        $invoices = $invQuery->get();
+
+        $customers = $rawCustomers->map(function ($c) use ($invoices) {
+            $matched = $invoices->filter(function ($inv) use ($c) {
+                if ((string) $inv->business_id !== (string) $c->business_id) {
+                    return false;
+                }
+                if (!empty($inv->customer_id) && $inv->customer_id === $c->id) {
+                    return true;
+                }
+                if (!empty($c->phone) && !empty($inv->customer_phone) && trim($inv->customer_phone) === trim($c->phone)) {
+                    return true;
+                }
+                return strtolower(trim((string) $inv->customer_name)) === strtolower(trim((string) $c->name));
+            });
+            $c->total_billed = (float) $matched->sum('grand_total');
+            $c->invoice_due = (float) $matched->sum('balance_due');
+            $c->outstanding_balance = (float) $c->opening_balance + $c->invoice_due;
+            return $c;
+        });
+
+        $totalOutstanding = (float) $customers->sum('outstanding_balance');
+        $totalBilled = (float) $customers->sum('total_billed');
+        $customersWithDue = $customers->filter(fn ($c) => $c->outstanding_balance > 0.01)->count();
+
+        return view('admin.customers', compact(
+            'businesses', 'bizMap', 'selectedBizId', 'activeTheme',
+            'customers', 'search', 'totalOutstanding', 'totalBilled', 'customersWithDue'
+        ));
+    }
+
+    public function storeCustomer(Request $request): RedirectResponse
+    {
+        $data = $request->validate([
+            'business_id' => ['required', 'string'],
+            'name' => ['required', 'string', 'max:200'],
+            'phone' => ['nullable', 'string', 'max:64'],
+            'email' => ['nullable', 'email', 'max:200'],
+            'address' => ['nullable', 'string', 'max:500'],
+            'pricing_tier' => ['nullable', 'string', 'max:32'],
+            'credit_limit' => ['nullable', 'numeric', 'min:0'],
+            'opening_balance' => ['nullable', 'numeric', 'min:0'],
+            'notes' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $now = $this->rbac->nowMs();
+        DB::table('customers')->insert([
+            'id' => (string) Str::uuid(),
+            'business_id' => $data['business_id'],
+            'name' => trim($data['name']),
+            'phone' => trim((string) ($data['phone'] ?? '')),
+            'email' => trim((string) ($data['email'] ?? '')),
+            'address' => trim((string) ($data['address'] ?? '')),
+            'pricing_tier' => strtoupper((string) ($data['pricing_tier'] ?? 'RETAIL')),
+            'credit_limit' => (float) ($data['credit_limit'] ?? 0),
+            'opening_balance' => (float) ($data['opening_balance'] ?? 0),
+            'notes' => trim((string) ($data['notes'] ?? '')),
+            'performed_by_id' => $this->currentAdminId($request),
+            'performed_by_name' => $this->currentAdminName($request),
+            'created_at_ms' => $now,
+            'updated_at_ms' => $now,
+            'server_modified_at_ms' => $now,
+            'is_deleted' => false,
+        ]);
+
+        return redirect()->route('admin.customers')->with('success', 'Customer added and synced.');
+    }
+
+    public function updateCustomer(Request $request, string $id): RedirectResponse
+    {
+        $data = $request->validate([
+            'business_id' => ['required', 'string'],
+            'name' => ['required', 'string', 'max:200'],
+            'phone' => ['nullable', 'string', 'max:64'],
+            'email' => ['nullable', 'email', 'max:200'],
+            'address' => ['nullable', 'string', 'max:500'],
+            'pricing_tier' => ['nullable', 'string', 'max:32'],
+            'credit_limit' => ['nullable', 'numeric', 'min:0'],
+            'opening_balance' => ['nullable', 'numeric', 'min:0'],
+            'notes' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $now = $this->rbac->nowMs();
+        DB::table('customers')->where('id', $id)->update([
+            'business_id' => $data['business_id'],
+            'name' => trim($data['name']),
+            'phone' => trim((string) ($data['phone'] ?? '')),
+            'email' => trim((string) ($data['email'] ?? '')),
+            'address' => trim((string) ($data['address'] ?? '')),
+            'pricing_tier' => strtoupper((string) ($data['pricing_tier'] ?? 'RETAIL')),
+            'credit_limit' => (float) ($data['credit_limit'] ?? 0),
+            'opening_balance' => (float) ($data['opening_balance'] ?? 0),
+            'notes' => trim((string) ($data['notes'] ?? '')),
+            'performed_by_id' => $this->currentAdminId($request),
+            'performed_by_name' => $this->currentAdminName($request),
+            'updated_at_ms' => $now,
+            'server_modified_at_ms' => $now,
+        ]);
+
+        return redirect()->route('admin.customers')->with('success', 'Customer updated and synced.');
+    }
+
+    public function deleteCustomer(Request $request, string $id): RedirectResponse
+    {
+        $now = $this->rbac->nowMs();
+        DB::table('customers')->where('id', $id)->update([
+            'is_deleted' => true,
+            'performed_by_id' => $this->currentAdminId($request),
+            'performed_by_name' => $this->currentAdminName($request),
+            'updated_at_ms' => $now,
+            'server_modified_at_ms' => $now,
+        ]);
+
+        return redirect()->route('admin.customers')->with('success', 'Customer removed and synced.');
+    }
+
     // ---------- Expenses ----------
 
     public function expenses(Request $request): View
@@ -887,17 +1046,30 @@ class AdminController extends Controller
     {
         $this->rbac->ensureSeeded();
         $businesses = $this->activeBusinesses();
+        $bizMap = $businesses->keyBy('id');
         $selectedBizId = $this->selectedBusinessId($request);
         $activeTheme = $this->activeTheme($request, $businesses);
         $permissionsCatalog = config('sync.permissions', []);
 
-        $roles = DB::table('roles')->orderByDesc('is_system')->orderBy('name')->get()->map(function ($r) {
+        $hasBizCol = Schema::hasColumn('roles', 'business_id');
+        $rolesQuery = DB::table('roles')->orderByDesc('is_system')->orderBy('name');
+        if ($hasBizCol && $selectedBizId !== '') {
+            $rolesQuery->where(function ($q) use ($selectedBizId) {
+                $q->whereNull('business_id')
+                    ->orWhere('business_id', '')
+                    ->orWhere('business_id', $selectedBizId);
+            });
+        }
+
+        $roles = $rolesQuery->get()->map(function ($r) use ($bizMap, $hasBizCol) {
             $r->permissions = json_decode((string) $r->permissions_json, true) ?: [];
             $r->user_count = DB::table('app_users')->where('role_id', $r->id)->count();
+            $r->business_id_val = $hasBizCol ? (string) ($r->business_id ?? '') : '';
+            $r->business_label = $r->business_id_val !== '' ? ($bizMap[$r->business_id_val]->name ?? 'Custom Business') : 'Global / Shared';
             return $r;
         });
 
-        return view('admin.roles', compact('businesses', 'selectedBizId', 'activeTheme', 'roles', 'permissionsCatalog'));
+        return view('admin.roles', compact('businesses', 'bizMap', 'selectedBizId', 'activeTheme', 'roles', 'permissionsCatalog'));
     }
 
     public function storeRole(Request $request): RedirectResponse
@@ -988,20 +1160,57 @@ class AdminController extends Controller
         $selectedBizId = $this->selectedBusinessId($request);
         $activeTheme = $this->activeTheme($request, $businesses);
 
-        $roles = DB::table('roles')->orderByDesc('is_system')->orderBy('name')->get();
-        $roleMap = $roles->keyBy('id');
+        $hasBizCol = Schema::hasColumn('roles', 'business_id');
+        $rolesQuery = DB::table('roles')->orderByDesc('is_system')->orderBy('name');
+        if ($hasBizCol && $selectedBizId !== '') {
+            $rolesQuery->where(function ($q) use ($selectedBizId) {
+                $q->whereNull('business_id')->orWhere('business_id', '')->orWhere('business_id', $selectedBizId);
+            });
+        }
+        $roles = $rolesQuery->get();
+        $allRolesMap = DB::table('roles')->get()->keyBy('id');
 
         $tokenCounts = DB::table('app_user_tokens')
             ->selectRaw('user_id, COUNT(*) as cnt')
             ->groupBy('user_id')
             ->pluck('cnt', 'user_id');
 
-        $users = DB::table('app_users')->orderBy('created_at_ms')->get()->map(function ($u) use ($roleMap, $tokenCounts) {
-            $u->role_name = $roleMap[$u->role_id]->name ?? 'Unknown';
-            $u->business_ids = json_decode((string) $u->business_ids_json, true) ?: ['*'];
+        // Build map of owner_user_id -> owned business IDs
+        $ownerBizMap = [];
+        foreach ($businesses as $b) {
+            if (!empty($b->owner_user_id)) {
+                $ownerBizMap[(string) $b->owner_user_id][] = (string) $b->id;
+            }
+        }
+
+        $allUsers = DB::table('app_users')->orderBy('created_at_ms')->get()->map(function ($u) use ($allRolesMap, $tokenCounts, $ownerBizMap, $bizMap) {
+            $role = $allRolesMap[$u->role_id] ?? null;
+            $rolePerms = $role ? (json_decode((string) $role->permissions_json, true) ?: []) : [];
+            $u->role_name = $role->name ?? 'Unknown';
+            $u->business_ids = array_values(array_unique(array_map('strval', json_decode((string) $u->business_ids_json, true) ?: ['*'])));
             $u->active_sessions = (int) ($tokenCounts[$u->id] ?? 0);
+            $u->owned_business_ids = $ownerBizMap[(string) $u->id] ?? [];
+            $u->is_owner = !empty($u->owned_business_ids)
+                || $u->role_id === 'role-business-owner'
+                || in_array('manage_team', $rolePerms, true);
+            $u->business_names = in_array('*', $u->business_ids, true)
+                ? ['All Businesses']
+                : array_values(array_map(fn ($id) => $bizMap[$id]->name ?? $id, $u->business_ids));
             return $u;
         });
+
+        // Business-scoped filtering: when a specific business is selected, show ONLY its owners & staff!
+        $users = $selectedBizId !== ''
+            ? $allUsers->filter(function ($u) use ($selectedBizId) {
+                if (in_array($selectedBizId, $u->business_ids, true)) {
+                    return true;
+                }
+                if (in_array($selectedBizId, $u->owned_business_ids, true)) {
+                    return true;
+                }
+                return false;
+            })->values()
+            : $allUsers->values();
 
         return view('admin.users', compact(
             'businesses', 'bizMap', 'selectedBizId', 'activeTheme', 'roles', 'users'

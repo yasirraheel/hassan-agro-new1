@@ -27,6 +27,11 @@ object Formatters {
         return prefix + numberFormat.format(abs(amount))
     }
 
+    fun formatDecimal(amount: Double): String {
+        val sign = if (amount < 0) "-" else ""
+        return sign + numberFormat.format(abs(amount))
+    }
+
     fun formatCompactPkr(amount: Double, currencySymbol: String = "Rs."): String {
         val sym = currencySymbol.trim().ifBlank { "Rs." }
         val absVal = abs(amount)

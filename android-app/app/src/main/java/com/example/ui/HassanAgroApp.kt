@@ -147,6 +147,7 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
     val activeBusiness by viewModel.activeBusiness.collectAsStateWithLifecycle()
     val products by viewModel.products.collectAsStateWithLifecycle()
     val invoices by viewModel.invoices.collectAsStateWithLifecycle()
+    val customers by viewModel.customers.collectAsStateWithLifecycle()
     val expenses by viewModel.expenses.collectAsStateWithLifecycle()
     val allProducts by viewModel.allProducts.collectAsStateWithLifecycle()
     val allInvoices by viewModel.allInvoices.collectAsStateWithLifecycle()
@@ -157,6 +158,7 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
     val allMonthlyExpenses by viewModel.allMonthlyExpenseTotals.collectAsStateWithLifecycle()
     val serverConfig by viewModel.serverConfig.collectAsStateWithLifecycle()
     val syncState by viewModel.syncUiState.collectAsStateWithLifecycle()
+    val teamState by viewModel.teamState.collectAsStateWithLifecycle()
     val pendingSyncCount by viewModel.pendingSyncCount.collectAsStateWithLifecycle()
     val inventoryFilter by viewModel.inventoryFilter.collectAsStateWithLifecycle()
     val billingDraft by viewModel.billingDraft.collectAsStateWithLifecycle()
@@ -173,6 +175,7 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
     val canReports = authSession.hasPermission(AppPermission.VIEW_REPORTS)
     val canExport = authSession.hasPermission(AppPermission.EXPORT_DATA)
     val canManageBusinesses = authSession.hasPermission(AppPermission.MANAGE_BUSINESSES)
+    val canManageTeam = authSession.hasPermission(AppPermission.MANAGE_TEAM) || authSession.hasPermission(AppPermission.MANAGE_ROLES)
     val canManageSettings = authSession.hasPermission(AppPermission.MANAGE_SETTINGS)
 
     val allowedDestinations = remember(canDashboard, canInventory, canBillingTab, canExpenses, canReports) {
@@ -236,7 +239,11 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
                             BusinessSwitcherPill(
                                 activeBusiness = activeBusiness,
                                 businessCount = businesses.size,
-                                onClick = { showBusinessSwitcher = true }
+                                onClick = {
+                                    if (canManageBusinesses || businesses.size > 1) {
+                                        showBusinessSwitcher = true
+                                    }
+                                }
                             )
                         },
                         actions = {
@@ -382,12 +389,17 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
                                 activeBusiness = activeBusiness,
                                 products = products,
                                 invoices = invoices,
+                                customers = customers,
                                 draft = billingDraft,
                                 heldCarts = heldCarts,
                                 generatedInvoice = generatedInvoice,
                                 canCreateSale = canUsePos,
                                 canCollectCredit = canCollectCredit,
                                 canReturnSale = canReturnSales,
+                                onSelectSavedCustomer = viewModel::selectBillingCustomer,
+                                onToggleSaveCustomer = viewModel::updateBillingSaveCustomer,
+                                onSaveCustomer = viewModel::saveCustomer,
+                                onDeleteCustomer = viewModel::deleteCustomer,
                                 onUpdateCustomer = viewModel::updateBillingCustomer,
                                 onSelectTier = viewModel::updateBillingTier,
                                 onUpdateTax = viewModel::updateBillingTax,
@@ -403,7 +415,8 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
                                 onDiscardHeldCart = viewModel::discardHeldCart,
                                 onRequestScanToCart = { activeScanTarget = ScanTarget.BILLING_CART },
                                 onFinalizeInvoice = viewModel::finalizeInvoiceAndGeneratePdf,
-                                onOpenPastInvoice = viewModel::openExistingInvoicePdf,
+                                onOpenPastInvoice = { entry -> viewModel.openExistingInvoicePdf(entry) },
+                                onSwitchInvoiceStyle = viewModel::switchGeneratedInvoiceStyle,
                                 onRecordPayment = viewModel::recordInvoicePayment,
                                 onReturnInvoice = viewModel::returnInvoiceAndRestock,
                                 onGoToInventory = { navigateTopLevel(NavRoutes.INVENTORY) },
@@ -450,8 +463,10 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
                                 activeBusiness = activeBusiness,
                                 serverConfig = serverConfig,
                                 syncState = syncState,
+                                teamState = teamState,
                                 pendingSyncCount = pendingSyncCount,
                                 canManageBusinesses = canManageBusinesses,
+                                canManageTeam = canManageTeam,
                                 canManageSettings = canManageSettings,
                                 onSwitchBusiness = viewModel::switchBusiness,
                                 onSaveBusiness = viewModel::saveBusiness,
@@ -460,6 +475,12 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
                                 onSaveServerConfig = viewModel::saveServerConfig,
                                 onTestServerConnection = viewModel::testServerConnection,
                                 onSyncNow = { viewModel.syncNow(silent = false) },
+                                onLoadTeam = viewModel::loadTeamOverview,
+                                onSaveTeamRole = viewModel::saveTeamRole,
+                                onDeleteTeamRole = viewModel::deleteTeamRole,
+                                onSaveTeamUser = viewModel::saveTeamUser,
+                                onToggleTeamUser = viewModel::toggleTeamUser,
+                                onDeleteTeamUser = viewModel::deleteTeamUser,
                                 onSignOut = viewModel::logout,
                                 onBack = { navController.popBackStack() }
                             )

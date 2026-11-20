@@ -26,6 +26,9 @@
                         <td>
                             <strong>{{ $role->name }}</strong>
                             @if($role->is_system)<span class="badge badge-primary" style="margin-left:4px;">System</span>@endif
+                            @if(!empty($role->business_id_val))
+                                <span class="badge badge-amber" style="margin-left:4px;">🏢 {{ $role->business_label }}</span>
+                            @endif
                             @if($role->description)
                                 <div style="font-size:12px; color:var(--muted);">{{ $role->description }}</div>
                             @endif

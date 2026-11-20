@@ -10,16 +10,18 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 @Database(
     entities = [
         BusinessEntity::class,
+        CustomerEntity::class,
         ProductEntity::class,
         InvoiceEntity::class,
         InvoiceItemEntity::class,
         ExpenseEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun businessDao(): BusinessDao
+    abstract fun customerDao(): CustomerDao
     abstract fun productDao(): ProductDao
     abstract fun invoiceDao(): InvoiceDao
     abstract fun expenseDao(): ExpenseDao
@@ -63,6 +65,40 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE businesses ADD COLUMN taxPresetsJson TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE businesses ADD COLUMN pricingRulesJson TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE invoices ADD COLUMN customerId TEXT NOT NULL DEFAULT ''")
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `customers` (
+                        `id` TEXT NOT NULL,
+                        `businessId` TEXT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `phone` TEXT NOT NULL DEFAULT '',
+                        `email` TEXT NOT NULL DEFAULT '',
+                        `address` TEXT NOT NULL DEFAULT '',
+                        `pricingTier` TEXT NOT NULL DEFAULT 'RETAIL',
+                        `creditLimit` REAL NOT NULL DEFAULT 0.0,
+                        `openingBalance` REAL NOT NULL DEFAULT 0.0,
+                        `notes` TEXT NOT NULL DEFAULT '',
+                        `performedById` TEXT NOT NULL DEFAULT '',
+                        `performedByName` TEXT NOT NULL DEFAULT '',
+                        `createdAt` INTEGER NOT NULL DEFAULT 0,
+                        `updatedAt` INTEGER NOT NULL DEFAULT 0,
+                        `isDeleted` INTEGER NOT NULL DEFAULT 0,
+                        `syncStatus` TEXT NOT NULL DEFAULT 'PENDING',
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_customers_businessId` ON `customers` (`businessId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_customers_businessId_phone` ON `customers` (`businessId`, `phone`)")
+            }
+        }
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -73,7 +109,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "hassan_agro_ledger.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                     .also { INSTANCE = it }
             }

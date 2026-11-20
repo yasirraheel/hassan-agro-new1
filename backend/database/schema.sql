@@ -1,7 +1,8 @@
--- Full MySQL schema for Business Manager Sync + RBAC + Themes (Hostinger Ready)
+-- Full MySQL schema for Business Manager Sync + RBAC + Customization + Customers (Hostinger Ready)
 
 CREATE TABLE IF NOT EXISTS `roles` (
   `id` CHAR(36) NOT NULL,
+  `business_id` CHAR(36) NULL,
   `name` VARCHAR(100) NOT NULL,
   `description` VARCHAR(255) NOT NULL DEFAULT '',
   `permissions_json` TEXT NOT NULL,
@@ -9,7 +10,8 @@ CREATE TABLE IF NOT EXISTS `roles` (
   `created_at_ms` BIGINT NOT NULL DEFAULT 0,
   `updated_at_ms` BIGINT NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_roles_name` (`name`)
+  INDEX `idx_roles_business` (`business_id`),
+  INDEX `idx_roles_name` (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `app_users` (
@@ -51,6 +53,18 @@ CREATE TABLE IF NOT EXISTS `businesses` (
   `tax_id` VARCHAR(255) NOT NULL DEFAULT '',
   `invoice_prefix` VARCHAR(16) NOT NULL DEFAULT 'BM',
   `theme_key` VARCHAR(32) NOT NULL DEFAULT 'OCEAN',
+  `business_type` VARCHAR(32) NOT NULL DEFAULT 'GENERAL',
+  `currency_symbol` VARCHAR(12) NOT NULL DEFAULT 'Rs.',
+  `track_expiry` TINYINT(1) NOT NULL DEFAULT 1,
+  `track_batch` TINYINT(1) NOT NULL DEFAULT 1,
+  `batch_field_label` VARCHAR(64) NOT NULL DEFAULT 'Batch No.',
+  `pack_size_label` VARCHAR(64) NOT NULL DEFAULT 'Pack / Size',
+  `product_categories_json` TEXT NULL,
+  `expense_categories_json` TEXT NULL,
+  `payment_methods_json` TEXT NULL,
+  `pricing_tier_labels_json` TEXT NULL,
+  `tax_presets_json` TEXT NULL,
+  `pricing_rules_json` TEXT NULL,
   `default_tax_rate` DECIMAL(8,2) NOT NULL DEFAULT 0.00,
   `invoice_footer` TEXT NULL,
   `created_at_ms` BIGINT NOT NULL DEFAULT 0,
@@ -61,6 +75,30 @@ CREATE TABLE IF NOT EXISTS `businesses` (
   INDEX `idx_businesses_owner` (`owner_user_id`),
   INDEX `idx_businesses_updated` (`updated_at_ms`),
   INDEX `idx_businesses_server_mod` (`server_modified_at_ms`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `customers` (
+  `id` CHAR(36) NOT NULL,
+  `business_id` CHAR(36) NOT NULL,
+  `name` VARCHAR(255) NOT NULL,
+  `phone` VARCHAR(64) NOT NULL DEFAULT '',
+  `email` VARCHAR(255) NOT NULL DEFAULT '',
+  `address` TEXT NULL,
+  `pricing_tier` VARCHAR(32) NOT NULL DEFAULT 'RETAIL',
+  `credit_limit` DECIMAL(14,2) NOT NULL DEFAULT 0.00,
+  `opening_balance` DECIMAL(14,2) NOT NULL DEFAULT 0.00,
+  `notes` TEXT NULL,
+  `performed_by_id` CHAR(36) NOT NULL DEFAULT '',
+  `performed_by_name` VARCHAR(150) NOT NULL DEFAULT '',
+  `created_at_ms` BIGINT NOT NULL DEFAULT 0,
+  `updated_at_ms` BIGINT NOT NULL DEFAULT 0,
+  `server_modified_at_ms` BIGINT NOT NULL DEFAULT 0,
+  `is_deleted` TINYINT(1) NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  INDEX `idx_customers_business` (`business_id`),
+  INDEX `idx_customers_phone` (`phone`),
+  INDEX `idx_customers_updated` (`updated_at_ms`),
+  INDEX `idx_customers_server_mod` (`server_modified_at_ms`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `products` (
@@ -96,6 +134,7 @@ CREATE TABLE IF NOT EXISTS `invoices` (
   `id` CHAR(36) NOT NULL,
   `business_id` CHAR(36) NOT NULL,
   `invoice_number` VARCHAR(64) NOT NULL,
+  `customer_id` CHAR(36) NOT NULL DEFAULT '',
   `customer_name` VARCHAR(255) NOT NULL,
   `customer_phone` VARCHAR(64) NOT NULL DEFAULT '',
   `customer_email` VARCHAR(255) NOT NULL DEFAULT '',
@@ -120,6 +159,7 @@ CREATE TABLE IF NOT EXISTS `invoices` (
   `is_deleted` TINYINT(1) NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`),
   INDEX `idx_invoices_business` (`business_id`),
+  INDEX `idx_invoices_customer` (`customer_id`),
   INDEX `idx_invoices_number` (`invoice_number`),
   INDEX `idx_invoices_updated` (`updated_at_ms`),
   INDEX `idx_invoices_server_mod` (`server_modified_at_ms`)

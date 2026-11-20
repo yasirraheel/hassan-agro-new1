@@ -239,6 +239,7 @@
         <a href="{{ route('admin.businesses') }}" class="nav-link {{ request()->routeIs('admin.businesses*') ? 'active' : '' }}">🏢 Businesses &amp; Themes</a>
         <a href="{{ route('admin.products') }}" class="nav-link {{ request()->routeIs('admin.products*') ? 'active' : '' }}">📦 Inventory &amp; Stock</a>
         <a href="{{ route('admin.invoices') }}" class="nav-link {{ request()->routeIs('admin.invoices*') ? 'active' : '' }}">🧾 POS Sales &amp; Invoices</a>
+        <a href="{{ route('admin.customers') }}" class="nav-link {{ request()->routeIs('admin.customers*') ? 'active' : '' }}">🤝 Customers &amp; Udhaar</a>
         <a href="{{ route('admin.expenses') }}" class="nav-link {{ request()->routeIs('admin.expenses*') ? 'active' : '' }}">💸 Expenses</a>
         <a href="{{ route('admin.reports') }}" class="nav-link {{ request()->routeIs('admin.reports*') ? 'active' : '' }}">📈 Monthly Reports</a>
 

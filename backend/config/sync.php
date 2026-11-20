@@ -17,7 +17,8 @@ return [
         'export_data' => 'Export PDF Reports & CSV Spreadsheets',
         'manage_businesses' => 'Create / Customize / Switch Businesses',
         'manage_settings' => 'Configure Sync & Business Customization',
-        'manage_roles' => 'Web Admin: Manage Roles & Staff Users',
+        'manage_team' => 'Manage Business Staff, Co-Owners & Custom Roles',
+        'manage_roles' => 'Web Admin: Manage All Roles & Staff Users',
     ],
 
     'themes' => [

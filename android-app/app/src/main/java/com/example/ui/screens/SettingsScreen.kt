@@ -87,8 +87,10 @@ import com.example.data.local.AuthSession
 import com.example.data.local.BusinessEntity
 import com.example.data.local.BusinessTypePreset
 import com.example.data.local.CustomizationJson
+import com.example.data.local.PricingMarginRules
 import com.example.data.local.PricingTier
 import com.example.data.local.ServerSyncConfig
+import com.example.data.local.TaxPreset
 import com.example.ui.components.AgriFilterChip
 import com.example.ui.components.BusinessLogoAvatar
 import com.example.ui.components.EditableTagListEditor
@@ -98,6 +100,13 @@ import com.example.ui.theme.AppThemeOption
 import com.example.ui.theme.MonoCodeSmall
 import com.example.util.Formatters
 import com.example.viewmodel.SyncUiState
+import com.example.viewmodel.TeamUiState
+
+private enum class SettingsTabKey(val label: String) {
+    BUSINESSES("Business"),
+    TEAM("Team & Roles"),
+    SYNC("Sync")
+}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -107,8 +116,10 @@ fun SettingsScreen(
     activeBusiness: BusinessEntity,
     serverConfig: ServerSyncConfig,
     syncState: SyncUiState,
+    teamState: TeamUiState,
     pendingSyncCount: Int,
     canManageBusinesses: Boolean,
+    canManageTeam: Boolean,
     canManageSettings: Boolean,
     onSwitchBusiness: (String) -> Unit,
     onSaveBusiness: (BusinessEntity, Boolean) -> Unit,
@@ -117,13 +128,30 @@ fun SettingsScreen(
     onSaveServerConfig: (String, String, String, Boolean) -> Unit,
     onTestServerConnection: (String, String) -> Unit,
     onSyncNow: () -> Unit,
+    onLoadTeam: () -> Unit,
+    onSaveTeamRole: (String?, String, String, List<String>, () -> Unit) -> Unit,
+    onDeleteTeamRole: (String) -> Unit,
+    onSaveTeamUser: (String?, String, String, String, String, String, List<String>?, () -> Unit) -> Unit,
+    onToggleTeamUser: (String) -> Unit,
+    onDeleteTeamUser: (String) -> Unit,
     onSignOut: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     BackHandler(onBack = onBack)
 
-    var selectedTab by remember { mutableIntStateOf(0) }
+    // Strict simplification for non-owner staff / moderators / salesmen
+    val isRestrictedStaff = !canManageBusinesses && !canManageTeam && !canManageSettings
+
+    val availableTabs = remember(canManageBusinesses, canManageTeam, canManageSettings) {
+        buildList {
+            add(SettingsTabKey.BUSINESSES)
+            if (canManageTeam) add(SettingsTabKey.TEAM)
+            if (canManageSettings || canManageBusinesses) add(SettingsTabKey.SYNC)
+        }
+    }
+
+    var selectedTab by remember(availableTabs) { mutableStateOf(availableTabs.first()) }
     var editingBusiness by remember { mutableStateOf<BusinessEntity?>(null) }
     var showAddBusinessSheet by remember { mutableStateOf(false) }
 
@@ -151,7 +179,7 @@ fun SettingsScreen(
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_back))
                 }
                 Text(
-                    text = "Settings & Customization",
+                    text = if (isRestrictedStaff) "My Account & Sync" else "Settings & Customization",
                     style = MaterialTheme.typography.titleLarge,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -159,40 +187,35 @@ fun SettingsScreen(
                 )
             }
 
-            SingleChoiceSegmentedButtonRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp)
-            ) {
-                SegmentedButton(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    shape = SegmentedButtonDefaults.itemShape(0, 2),
-                    modifier = Modifier.testTag("settings_tab_businesses")
+            if (!isRestrictedStaff && availableTabs.size > 1) {
+                SingleChoiceSegmentedButtonRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
                 ) {
-                    Text(
-                        "Businesses (${businesses.size})",
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                SegmentedButton(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    shape = SegmentedButtonDefaults.itemShape(1, 2),
-                    modifier = Modifier.testTag("settings_tab_server")
-                ) {
-                    Text(
-                        "Server Sync",
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    availableTabs.forEachIndexed { idx, tab ->
+                        SegmentedButton(
+                            selected = selectedTab == tab,
+                            onClick = { selectedTab = tab },
+                            shape = SegmentedButtonDefaults.itemShape(idx, availableTabs.size),
+                            modifier = Modifier.testTag("settings_tab_${tab.name.lowercase()}")
+                        ) {
+                            Text(
+                                text = when (tab) {
+                                    SettingsTabKey.BUSINESSES -> "Business (${businesses.size})"
+                                    SettingsTabKey.TEAM -> "Team & Roles"
+                                    SettingsTabKey.SYNC -> "Sync"
+                                },
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 }
             }
 
-            if (selectedTab == 0) {
+            if (isRestrictedStaff || selectedTab == SettingsTabKey.BUSINESSES) {
                 LazyColumn(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -375,82 +398,132 @@ fun SettingsScreen(
                         }
                     }
 
-                    item {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Accessible Businesses", style = MaterialTheme.typography.titleMedium)
-                            if (canManageBusinesses) {
-                                Button(
-                                    onClick = { showAddBusinessSheet = true },
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                    modifier = Modifier.testTag("add_new_business_button")
+                    // Simple 1-tap Sync button for restricted staff (no server config tinkering)
+                    if (isRestrictedStaff) {
+                        item {
+                            Surface(
+                                shape = MaterialTheme.shapes.large,
+                                color = MaterialTheme.colorScheme.surface,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Add Business", maxLines = 1, softWrap = false)
+                                    Text("Cloud Sync", style = MaterialTheme.typography.titleMedium)
+                                    Text(
+                                        text = if (pendingSyncCount > 0)
+                                            "$pendingSyncCount pending changes waiting to sync."
+                                        else if (serverConfig.lastSyncTimestamp > 0L)
+                                            "Last synced: ${Formatters.formatDateTime(serverConfig.lastSyncTimestamp)}"
+                                        else
+                                            "All entries are automatically synced with your business server.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Button(
+                                        onClick = onSyncNow,
+                                        enabled = !syncState.isSyncing,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(48.dp)
+                                            .testTag("staff_sync_now_button")
+                                    ) {
+                                        if (syncState.isSyncing) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(18.dp),
+                                                strokeWidth = 2.dp,
+                                                color = MaterialTheme.colorScheme.onPrimary
+                                            )
+                                        } else {
+                                            Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        }
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(if (syncState.isSyncing) "Syncing..." else "Sync Now", maxLines = 1, softWrap = false)
+                                    }
                                 }
                             }
                         }
                     }
 
-                    items(businesses, key = { it.id }) { biz ->
-                        val isSelected = biz.id == activeBusiness.id
-                        val bizTheme = AppThemeOption.fromKey(biz.themeKey)
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onSwitchBusiness(biz.id) }
-                                .testTag("settings_business_card_${biz.id}"),
-                            shape = MaterialTheme.shapes.medium,
-                            color = if (isSelected) bizTheme.primaryContainerColor.copy(alpha = 0.45f)
-                            else MaterialTheme.colorScheme.surface,
-                            border = BorderStroke(
-                                width = if (isSelected) 1.5.dp else 1.dp,
-                                color = if (isSelected) bizTheme.primaryColor else MaterialTheme.colorScheme.outlineVariant
-                            )
-                        ) {
+                    if (canManageBusinesses || businesses.size > 1) {
+                        item {
                             Row(
-                                modifier = Modifier.padding(12.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                BusinessLogoAvatar(business = biz, size = 40.dp)
-                                Spacer(Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        biz.name,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = "${bizTheme.label} • ${biz.invoicePrefix} • ${biz.resolvedCurrency()}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                if (isSelected) {
-                                    Icon(
-                                        Icons.Default.CheckCircle,
-                                        contentDescription = "Active",
-                                        tint = bizTheme.primaryColor
-                                    )
-                                }
+                                Text("Accessible Businesses", style = MaterialTheme.typography.titleMedium)
                                 if (canManageBusinesses) {
-                                    IconButton(onClick = { editingBusiness = biz }) {
-                                        Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.cd_edit_item))
+                                    Button(
+                                        onClick = { showAddBusinessSheet = true },
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                        modifier = Modifier.testTag("add_new_business_button")
+                                    ) {
+                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Add Business", maxLines = 1, softWrap = false)
                                     }
-                                    if (businesses.size > 1) {
-                                        IconButton(onClick = { onDeleteBusiness(biz.id) }) {
-                                            Icon(
-                                                Icons.Default.Delete,
-                                                contentDescription = stringResource(R.string.cd_delete_item),
-                                                tint = MaterialTheme.colorScheme.error
-                                            )
+                                }
+                            }
+                        }
+
+                        items(businesses, key = { it.id }) { biz ->
+                            val isSelected = biz.id == activeBusiness.id
+                            val bizTheme = AppThemeOption.fromKey(biz.themeKey)
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onSwitchBusiness(biz.id) }
+                                    .testTag("settings_business_card_${biz.id}"),
+                                shape = MaterialTheme.shapes.medium,
+                                color = if (isSelected) bizTheme.primaryContainerColor.copy(alpha = 0.45f)
+                                else MaterialTheme.colorScheme.surface,
+                                border = BorderStroke(
+                                    width = if (isSelected) 1.5.dp else 1.dp,
+                                    color = if (isSelected) bizTheme.primaryColor else MaterialTheme.colorScheme.outlineVariant
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    BusinessLogoAvatar(business = biz, size = 40.dp)
+                                    Spacer(Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            biz.name,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = "${bizTheme.label} • ${biz.invoicePrefix} • ${biz.resolvedCurrency()}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    if (isSelected) {
+                                        Icon(
+                                            Icons.Default.CheckCircle,
+                                            contentDescription = "Active",
+                                            tint = bizTheme.primaryColor
+                                        )
+                                    }
+                                    if (canManageBusinesses) {
+                                        IconButton(onClick = { editingBusiness = biz }) {
+                                            Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.cd_edit_item))
+                                        }
+                                        if (businesses.size > 1) {
+                                            IconButton(onClick = { onDeleteBusiness(biz.id) }) {
+                                                Icon(
+                                                    Icons.Default.Delete,
+                                                    contentDescription = stringResource(R.string.cd_delete_item),
+                                                    tint = MaterialTheme.colorScheme.error
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -458,6 +531,18 @@ fun SettingsScreen(
                         }
                     }
                 }
+            } else if (selectedTab == SettingsTabKey.TEAM && canManageTeam) {
+                TeamManagementSection(
+                    activeBusiness = activeBusiness,
+                    authSession = authSession,
+                    teamState = teamState,
+                    onLoadTeam = onLoadTeam,
+                    onSaveRole = onSaveTeamRole,
+                    onDeleteRole = onDeleteTeamRole,
+                    onSaveUser = onSaveTeamUser,
+                    onToggleUser = onToggleTeamUser,
+                    onDeleteUser = onDeleteTeamUser
+                )
             } else {
                 ServerSyncConfigTab(
                     serverConfig = serverConfig,
@@ -804,6 +889,20 @@ fun BusinessProfileEditorSheet(
         mutableStateOf(existing?.tierLabel(PricingTier.RETAIL) ?: (initialPreset.pricingTierLabels["RETAIL"] ?: "Retail"))
     }
 
+    var taxPresets by remember {
+        mutableStateOf(existing?.taxPresets() ?: TaxPreset.DEFAULT_LIST)
+    }
+    var newTaxName by remember { mutableStateOf("") }
+    var newTaxRate by remember { mutableStateOf("") }
+
+    val initialRules = remember(existing) { existing?.pricingRules() ?: PricingMarginRules() }
+    var defaultMarginMode by remember { mutableStateOf(initialRules.ownerMarginMode) }
+    var defaultOwnerMargin by remember { mutableStateOf(Formatters.formatDecimal(initialRules.ownerMarginValue)) }
+    var distMarkupPct by remember { mutableStateOf(Formatters.formatDecimal(initialRules.distributorStep)) }
+    var whlsMarkupPct by remember { mutableStateOf(Formatters.formatDecimal(initialRules.wholesalerStep)) }
+    var retailMarkupPct by remember { mutableStateOf(Formatters.formatDecimal(initialRules.retailStep)) }
+    var mrpMarkupPct by remember { mutableStateOf(Formatters.formatDecimal(initialRules.mrpStep)) }
+
     var pendingPresetApply by remember { mutableStateOf<BusinessTypePreset?>(null) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
@@ -849,6 +948,14 @@ fun BusinessProfileEditorSheet(
                         "WHOLESALER" to wholesaleLabel.trim().ifBlank { "Wholesaler" },
                         "RETAIL" to retailLabel.trim().ifBlank { "Retail" }
                     )
+                    val rules = PricingMarginRules(
+                        ownerMarginMode = defaultMarginMode,
+                        ownerMarginValue = defaultOwnerMargin.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 5.0,
+                        distributorStep = distMarkupPct.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0,
+                        wholesalerStep = whlsMarkupPct.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 5.0,
+                        retailStep = retailMarkupPct.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 12.0,
+                        mrpStep = mrpMarkupPct.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 20.0
+                    )
                     val entity = (existing ?: BusinessEntity(name = name.trim())).copy(
                         name = name.trim(),
                         tagline = tagline.trim(),
@@ -868,6 +975,8 @@ fun BusinessProfileEditorSheet(
                         expenseCategoriesJson = CustomizationJson.encodeList(expenseCategories),
                         paymentMethodsJson = CustomizationJson.encodeList(paymentMethods),
                         pricingTierLabelsJson = CustomizationJson.encodeTierLabels(tierMap),
+                        taxPresetsJson = CustomizationJson.encodeTaxPresets(taxPresets),
+                        pricingRulesJson = CustomizationJson.encodePricingRules(rules),
                         defaultTaxRate = defaultTax.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0,
                         invoiceFooter = footer.trim()
                     )
@@ -1204,6 +1313,154 @@ fun BusinessProfileEditorSheet(
                 value = retailLabel,
                 onValueChange = { retailLabel = it },
                 label = { Text("Tier 4 (Retail)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        // Section 7: Saved Tax Presets (used in Stock Pricing Calculator & POS Checkout)
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Text(
+            text = "Saved Tax Presets",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Text(
+            text = "Quick tax presets available when calculating product costs or billing on POS.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            taxPresets.forEachIndexed { idx, preset ->
+                Surface(
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "${preset.name} — ${Formatters.formatDecimal(preset.rate)}%",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium
+                        )
+                        if (taxPresets.size > 1) {
+                            IconButton(
+                                onClick = { taxPresets = taxPresets.filterIndexed { i, _ -> i != idx } },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = "Remove tax preset", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = newTaxName,
+                    onValueChange = { newTaxName = it },
+                    label = { Text("Tax Name", maxLines = 1) },
+                    placeholder = { Text("e.g. GST") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1.3f)
+                )
+                OutlinedTextField(
+                    value = newTaxRate,
+                    onValueChange = { newTaxRate = it },
+                    label = { Text("Rate %", maxLines = 1) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true,
+                    modifier = Modifier.weight(0.8f)
+                )
+                Button(
+                    onClick = {
+                        val rate = newTaxRate.toDoubleOrNull()
+                        if (newTaxName.isNotBlank() && rate != null && rate >= 0.0) {
+                            taxPresets = taxPresets + TaxPreset(newTaxName.trim(), rate)
+                            newTaxName = ""
+                            newTaxRate = ""
+                        }
+                    },
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    modifier = Modifier.height(50.dp)
+                ) { Text("Add") }
+            }
+        }
+
+        // Section 8: Default Owner Profit Margin & Tier Auto-Pricing Rules
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Text(
+            text = "Default Profit Margin & Tier Auto-Pricing",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Text(
+            text = "Pre-fills owner profit & suggested 4-tier selling prices whenever you add new products.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AgriFilterChip(
+                selected = defaultMarginMode == "PERCENT",
+                onClick = { defaultMarginMode = "PERCENT" },
+                label = "Percent %"
+            )
+            AgriFilterChip(
+                selected = defaultMarginMode == "FLAT",
+                onClick = { defaultMarginMode = "FLAT" },
+                label = "Flat $currencySymbol"
+            )
+            OutlinedTextField(
+                value = defaultOwnerMargin,
+                onValueChange = { defaultOwnerMargin = it },
+                label = { Text(if (defaultMarginMode == "FLAT") "Owner Profit" else "Owner Margin %", maxLines = 1) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedTextField(
+                value = distMarkupPct,
+                onValueChange = { distMarkupPct = it },
+                label = { Text("$distLabel +%", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+            OutlinedTextField(
+                value = whlsMarkupPct,
+                onValueChange = { whlsMarkupPct = it },
+                label = { Text("$wholesaleLabel +%", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedTextField(
+                value = retailMarkupPct,
+                onValueChange = { retailMarkupPct = it },
+                label = { Text("$retailLabel +%", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+            OutlinedTextField(
+                value = mrpMarkupPct,
+                onValueChange = { mrpMarkupPct = it },
+                label = { Text("$mrpLabel +%", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 modifier = Modifier.weight(1f)
             )

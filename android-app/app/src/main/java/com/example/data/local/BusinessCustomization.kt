@@ -17,6 +17,7 @@ enum class AppPermission(val key: String, val label: String) {
     EXPORT_DATA("export_data", "Export PDF / CSV"),
     MANAGE_BUSINESSES("manage_businesses", "Manage Businesses"),
     MANAGE_SETTINGS("manage_settings", "Manage Settings"),
+    MANAGE_TEAM("manage_team", "Manage Team & Custom Roles"),
     MANAGE_ROLES("manage_roles", "Manage Roles (Admin)");
 
     companion object {
@@ -175,4 +176,131 @@ object CustomizationJson {
             fallback
         }
     }
+
+    fun encodeTaxPresets(items: List<TaxPreset>): String {
+        val arr = JSONArray()
+        items.filter { it.name.isNotBlank() }.forEach { preset ->
+            arr.put(
+                JSONObject().apply {
+                    put("name", preset.name.trim())
+                    put("rate", preset.rate.coerceIn(0.0, 100.0))
+                }
+            )
+        }
+        return arr.toString()
+    }
+
+    fun decodeTaxPresets(json: String?): List<TaxPreset> {
+        if (json.isNullOrBlank()) return TaxPreset.DEFAULT_LIST
+        return try {
+            val arr = JSONArray(json)
+            val list = mutableListOf<TaxPreset>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val name = obj.optString("name").trim()
+                val rate = obj.optDouble("rate", 0.0).coerceIn(0.0, 100.0)
+                if (name.isNotEmpty()) list.add(TaxPreset(name, rate))
+            }
+            if (list.isEmpty()) TaxPreset.DEFAULT_LIST else list
+        } catch (_: Exception) {
+            TaxPreset.DEFAULT_LIST
+        }
+    }
+
+    fun encodePricingRules(rules: PricingMarginRules): String {
+        return JSONObject().apply {
+            put("ownerMarginMode", rules.ownerMarginMode)
+            put("ownerMarginValue", rules.ownerMarginValue)
+            put("distributorStep", rules.distributorStep)
+            put("wholesalerStep", rules.wholesalerStep)
+            put("retailStep", rules.retailStep)
+            put("mrpStep", rules.mrpStep)
+        }.toString()
+    }
+
+    fun decodePricingRules(json: String?): PricingMarginRules {
+        if (json.isNullOrBlank()) return PricingMarginRules()
+        return try {
+            val obj = JSONObject(json)
+            PricingMarginRules(
+                ownerMarginMode = obj.optString("ownerMarginMode", "PERCENT").ifBlank { "PERCENT" },
+                ownerMarginValue = obj.optDouble("ownerMarginValue", 5.0).coerceAtLeast(0.0),
+                distributorStep = obj.optDouble("distributorStep", 0.0).coerceAtLeast(0.0),
+                wholesalerStep = obj.optDouble("wholesalerStep", 5.0).coerceAtLeast(0.0),
+                retailStep = obj.optDouble("retailStep", 12.0).coerceAtLeast(0.0),
+                mrpStep = obj.optDouble("mrpStep", 20.0).coerceAtLeast(0.0)
+            )
+        } catch (_: Exception) {
+            PricingMarginRules()
+        }
+    }
 }
+
+data class TaxPreset(
+    val name: String,
+    val rate: Double
+) {
+    val displayLabel: String
+        get() = if (rate == 0.0) name else "$name (${if (rate % 1.0 == 0.0) rate.toInt() else rate}%)"
+
+    companion object {
+        val DEFAULT_LIST = listOf(
+            TaxPreset("No Tax", 0.0),
+            TaxPreset("GST", 18.0),
+            TaxPreset("Sales Tax", 17.0),
+            TaxPreset("WHT", 5.0)
+        )
+    }
+}
+
+data class PricingMarginRules(
+    val ownerMarginMode: String = "PERCENT", // "PERCENT" or "FLAT"
+    val ownerMarginValue: Double = 5.0,
+    val distributorStep: Double = 0.0, // Extra % above owner's minimum floor price
+    val wholesalerStep: Double = 5.0,
+    val retailStep: Double = 12.0,
+    val mrpStep: Double = 20.0
+)
+
+data class SuggestedTierPrices(
+    val landedCost: Double,
+    val baseFloorPrice: Double,
+    val distributorPrice: Double,
+    val wholesalerPrice: Double,
+    val retailPrice: Double,
+    val mrpPrice: Double
+)
+
+fun calculateSuggestedTierPrices(
+    purchasePrice: Double,
+    taxRatePercent: Double,
+    taxIncludedInCost: Boolean,
+    marginMode: String,
+    marginValue: Double,
+    rules: PricingMarginRules
+): SuggestedTierPrices {
+    val cleanCost = purchasePrice.coerceAtLeast(0.0)
+    val taxRate = taxRatePercent.coerceIn(0.0, 100.0)
+    val landed = if (taxIncludedInCost || taxRate <= 0.0) cleanCost else cleanCost * (1.0 + taxRate / 100.0)
+    val baseFloor = if (marginMode.equals("FLAT", ignoreCase = true)) {
+        landed + marginValue.coerceAtLeast(0.0)
+    } else {
+        landed * (1.0 + marginValue.coerceAtLeast(0.0) / 100.0)
+    }
+    fun round2(v: Double): Double = kotlin.math.round(v * 100.0) / 100.0
+
+    val dist = round2(baseFloor * (1.0 + rules.distributorStep.coerceAtLeast(0.0) / 100.0))
+    val whls = round2(baseFloor * (1.0 + rules.wholesalerStep.coerceAtLeast(0.0) / 100.0))
+    val ret = round2(baseFloor * (1.0 + rules.retailStep.coerceAtLeast(0.0) / 100.0))
+    val mrp = round2(baseFloor * (1.0 + rules.mrpStep.coerceAtLeast(0.0) / 100.0))
+
+    return SuggestedTierPrices(
+        landedCost = round2(landed),
+        baseFloorPrice = round2(baseFloor),
+        distributorPrice = dist,
+        wholesalerPrice = whls,
+        retailPrice = ret,
+        mrpPrice = mrp
+    )
+}
+

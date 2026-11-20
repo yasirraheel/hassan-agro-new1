@@ -6,6 +6,7 @@ import androidx.room.withTransaction
 import com.example.data.local.AppDatabase
 import com.example.data.local.AuthSession
 import com.example.data.local.BusinessEntity
+import com.example.data.local.CustomerEntity
 import com.example.data.local.ExpenseEntity
 import com.example.data.local.InvoiceEntity
 import com.example.data.local.InvoiceItemEntity
@@ -19,7 +20,11 @@ import com.example.data.local.SyncStatus
 import com.example.data.remote.CustomServerClientFactory
 import com.example.data.remote.LoginRequest
 import com.example.data.remote.RegisterRequest
+import com.example.data.remote.SaveTeamRoleRequest
+import com.example.data.remote.SaveTeamUserRequest
 import com.example.data.remote.SyncPushRequest
+import com.example.data.remote.TeamOverviewResponse
+import com.example.data.remote.ToggleTeamUserRequest
 import com.example.data.remote.toDto
 import com.example.data.remote.toEntity
 import com.example.data.remote.toEntityPair
@@ -52,6 +57,7 @@ class HassanAgroRepository(
     private val prefs: PreferencesStore
 ) {
     private val businessDao = db.businessDao()
+    private val customerDao = db.customerDao()
     private val productDao = db.productDao()
     private val invoiceDao = db.invoiceDao()
     private val expenseDao = db.expenseDao()
@@ -67,10 +73,14 @@ class HassanAgroRepository(
 
     val pendingSyncCountFlow: Flow<Int> = combine(
         businessDao.observePendingCount(),
+        customerDao.observePendingCount(),
         productDao.observePendingCount(),
         invoiceDao.observePendingCount(),
         expenseDao.observePendingCount()
-    ) { b, p, i, e -> b + p + i + e }
+    ) { b, c, p, i, e -> b + c + p + i + e }
+
+    fun observeCustomers(businessId: String): Flow<List<CustomerEntity>> =
+        customerDao.observeByBusiness(businessId)
 
     fun observeProducts(businessId: String): Flow<List<ProductEntity>> =
         productDao.observeByBusiness(businessId)
@@ -121,6 +131,7 @@ class HassanAgroRepository(
             invoiceDao.deleteAll()
             expenseDao.deleteAll()
             productDao.deleteAll()
+            customerDao.deleteAll()
             businessDao.deleteAll()
         }
     }
@@ -324,6 +335,21 @@ class HassanAgroRepository(
             }
         }
 
+    suspend fun saveCustomer(customer: CustomerEntity, performedById: String, performedByName: String) {
+        customerDao.upsert(
+            customer.copy(
+                performedById = performedById,
+                performedByName = performedByName,
+                updatedAt = System.currentTimeMillis(),
+                syncStatus = SyncStatus.PENDING.name
+            )
+        )
+    }
+
+    suspend fun deleteCustomer(customerId: String) {
+        customerDao.softDelete(customerId)
+    }
+
     suspend fun findProductByBarcode(businessId: String, barcode: String): ProductEntity? =
         productDao.findByBarcode(businessId, barcode.trim())
 
@@ -510,11 +536,12 @@ class HassanAgroRepository(
 
             // 1. Push pending local changes
             val pendingBusinesses = businessDao.getPendingSync()
+            val pendingCustomers = customerDao.getPendingSync()
             val pendingProducts = productDao.getPendingSync()
             val pendingInvoices = invoiceDao.getPendingSync()
             val pendingExpenses = expenseDao.getPendingSync()
 
-            val totalToPush = pendingBusinesses.size + pendingProducts.size +
+            val totalToPush = pendingBusinesses.size + pendingCustomers.size + pendingProducts.size +
                 pendingInvoices.size + pendingExpenses.size
 
             if (totalToPush > 0) {
@@ -522,6 +549,7 @@ class HassanAgroRepository(
                     SyncPushRequest(
                         deviceId = deviceId,
                         businesses = pendingBusinesses.map { it.toDto() },
+                        customers = pendingCustomers.map { it.toDto() },
                         products = pendingProducts.map { it.toDto() },
                         invoices = pendingInvoices.map { it.toDto() },
                         expenses = pendingExpenses.map { it.toDto() }
@@ -534,6 +562,7 @@ class HassanAgroRepository(
                     )
                 }
                 if (pendingBusinesses.isNotEmpty()) businessDao.markSynced(pendingBusinesses.map { it.id })
+                if (pendingCustomers.isNotEmpty()) customerDao.markSynced(pendingCustomers.map { it.id })
                 if (pendingProducts.isNotEmpty()) productDao.markSynced(pendingProducts.map { it.id })
                 if (pendingInvoices.isNotEmpty()) invoiceDao.markSynced(pendingInvoices.map { it.invoice.id })
                 if (pendingExpenses.isNotEmpty()) expenseDao.markSynced(pendingExpenses.map { it.id })
@@ -547,6 +576,13 @@ class HassanAgroRepository(
                     val local = businessDao.getById(dto.id)
                     if (local == null || dto.updatedAt >= local.updatedAt) {
                         businessDao.upsert(dto.toEntity(existingLogoPath = local?.logoFilePath))
+                        pulled++
+                    }
+                }
+                pullResp.customers.forEach { dto ->
+                    val local = customerDao.getById(dto.id)
+                    if (local == null || dto.updatedAt >= local.updatedAt) {
+                        customerDao.upsert(dto.toEntity())
                         pulled++
                     }
                 }
@@ -610,6 +646,144 @@ class HassanAgroRepository(
                 success = false,
                 message = "Sync failed (offline data safe): ${e.localizedMessage ?: "Network error"}"
             )
+        }
+    }
+
+    // ---------- Business Owner In-App Team & Custom Roles API ----------
+
+    private suspend fun createAuthedApi() = run {
+        val config = prefs.serverConfigFlow.first()
+        val session = prefs.authSessionFlow.first()
+        if (!config.isConfigured || session.authToken.isBlank()) {
+            throw IllegalStateException("Please sign in to a connected server to manage team & roles.")
+        }
+        val deviceId = prefs.ensureDeviceId()
+        CustomServerClientFactory.createApi(config.serverBaseUrl, session.authToken, deviceId)
+    }
+
+    suspend fun fetchTeamOverview(businessId: String): Result<TeamOverviewResponse> = withContext(Dispatchers.IO) {
+        try {
+            val api = createAuthedApi()
+            val resp = api.getTeamOverview(businessId)
+            val body = resp.body()
+            if (resp.isSuccessful && body != null && body.ok) {
+                Result.success(body)
+            } else {
+                val msg = body?.message ?: extractErrorMessage(resp.errorBody()?.string(), "Unable to load team (${resp.code()})")
+                Result.failure(IllegalStateException(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun saveTeamRole(
+        roleId: String?,
+        businessId: String,
+        name: String,
+        description: String,
+        permissions: List<String>
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val api = createAuthedApi()
+            val req = SaveTeamRoleRequest(
+                businessId = businessId,
+                name = name.trim(),
+                description = description.trim(),
+                permissions = permissions
+            )
+            val resp = if (roleId.isNullOrBlank()) api.createTeamRole(req) else api.updateTeamRole(roleId, req)
+            val body = resp.body()
+            if (resp.isSuccessful && body != null && body.ok) {
+                Result.success(body.message ?: "Role saved")
+            } else {
+                val msg = body?.message ?: extractErrorMessage(resp.errorBody()?.string(), "Failed to save role")
+                Result.failure(IllegalStateException(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deleteTeamRole(roleId: String, businessId: String): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val api = createAuthedApi()
+            val resp = api.deleteTeamRole(roleId, businessId)
+            val body = resp.body()
+            if (resp.isSuccessful && body != null && body.ok) {
+                Result.success(body.message ?: "Role deleted")
+            } else {
+                val msg = body?.message ?: extractErrorMessage(resp.errorBody()?.string(), "Failed to delete role")
+                Result.failure(IllegalStateException(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun saveTeamUser(
+        userId: String?,
+        businessId: String,
+        name: String,
+        email: String,
+        password: String,
+        roleId: String,
+        customRoleName: String = "",
+        customPermissions: List<String>? = null
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val api = createAuthedApi()
+            val req = SaveTeamUserRequest(
+                businessId = businessId,
+                name = name.trim(),
+                email = email.trim(),
+                password = password,
+                roleId = roleId,
+                customRoleName = customRoleName.trim(),
+                customPermissions = customPermissions
+            )
+            val resp = if (userId.isNullOrBlank()) api.createTeamUser(req) else api.updateTeamUser(userId, req)
+            val body = resp.body()
+            if (resp.isSuccessful && body != null && body.ok) {
+                Result.success(body.message ?: "Team member saved")
+            } else {
+                val msg = body?.message ?: extractErrorMessage(resp.errorBody()?.string(), "Failed to save team member")
+                Result.failure(IllegalStateException(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun toggleTeamUser(userId: String, businessId: String): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val api = createAuthedApi()
+            val resp = api.toggleTeamUser(userId, ToggleTeamUserRequest(businessId))
+            val body = resp.body()
+            if (resp.isSuccessful && body != null && body.ok) {
+                Result.success(body.message ?: "Status updated")
+            } else {
+                val msg = body?.message ?: extractErrorMessage(resp.errorBody()?.string(), "Failed to toggle user")
+                Result.failure(IllegalStateException(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deleteTeamUser(userId: String, businessId: String): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val api = createAuthedApi()
+            val resp = api.deleteTeamUser(userId, businessId)
+            val body = resp.body()
+            if (resp.isSuccessful && body != null && body.ok) {
+                Result.success(body.message ?: "User removed")
+            } else {
+                val msg = body?.message ?: extractErrorMessage(resp.errorBody()?.string(), "Failed to remove user")
+                Result.failure(IllegalStateException(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 }

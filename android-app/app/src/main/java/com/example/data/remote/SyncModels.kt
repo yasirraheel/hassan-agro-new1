@@ -1,6 +1,7 @@
 package com.example.data.remote
 
 import com.example.data.local.BusinessEntity
+import com.example.data.local.CustomerEntity
 import com.example.data.local.ExpenseEntity
 import com.example.data.local.InvoiceEntity
 import com.example.data.local.InvoiceItemEntity
@@ -70,6 +71,85 @@ data class LogoutResponse(
     val message: String? = null
 )
 
+// ---------- Team & Custom Roles Management DTOs ----------
+
+@JsonClass(generateAdapter = true)
+data class TeamPermissionItemDto(
+    val key: String,
+    val label: String
+)
+
+@JsonClass(generateAdapter = true)
+data class TeamRoleDto(
+    val id: String,
+    val businessId: String = "",
+    val name: String,
+    val description: String = "",
+    val permissions: List<String> = emptyList(),
+    val isSystem: Boolean = false,
+    val isEditable: Boolean = false,
+    val userCount: Int = 0
+)
+
+@JsonClass(generateAdapter = true)
+data class TeamUserDto(
+    val id: String,
+    val name: String,
+    val email: String,
+    val roleId: String,
+    val roleName: String = "",
+    val permissions: List<String> = emptyList(),
+    val isActive: Boolean = true,
+    val isOwner: Boolean = false,
+    val isPrimaryOwner: Boolean = false,
+    val lastLoginMs: Long = 0L
+)
+
+@JsonClass(generateAdapter = true)
+data class TeamOverviewResponse(
+    val ok: Boolean = false,
+    val message: String? = null,
+    val businessId: String = "",
+    val businessName: String = "",
+    val roles: List<TeamRoleDto> = emptyList(),
+    val users: List<TeamUserDto> = emptyList(),
+    val permissionsCatalog: List<TeamPermissionItemDto> = emptyList()
+)
+
+@JsonClass(generateAdapter = true)
+data class SaveTeamRoleRequest(
+    val businessId: String,
+    val name: String,
+    val description: String = "",
+    val permissions: List<String>
+)
+
+@JsonClass(generateAdapter = true)
+data class SaveTeamUserRequest(
+    val businessId: String,
+    val name: String,
+    val email: String,
+    val password: String = "",
+    val roleId: String = "",
+    val customRoleName: String = "",
+    val customPermissions: List<String>? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class ToggleTeamUserRequest(
+    val businessId: String
+)
+
+@JsonClass(generateAdapter = true)
+data class TeamActionResponse(
+    val ok: Boolean = false,
+    val id: String? = null,
+    val isActive: Boolean? = null,
+    val message: String? = null
+)
+
+// ---------- Core Sync DTOs ----------
+
 @JsonClass(generateAdapter = true)
 data class BusinessDto(
     val id: String,
@@ -91,8 +171,29 @@ data class BusinessDto(
     val expenseCategoriesJson: String = "",
     val paymentMethodsJson: String = "",
     val pricingTierLabelsJson: String = "",
+    val taxPresetsJson: String = "",
+    val pricingRulesJson: String = "",
     val defaultTaxRate: Double = 0.0,
     val invoiceFooter: String = "",
+    val createdAt: Long = 0L,
+    val updatedAt: Long = 0L,
+    val isDeleted: Boolean = false
+)
+
+@JsonClass(generateAdapter = true)
+data class CustomerDto(
+    val id: String,
+    val businessId: String,
+    val name: String,
+    val phone: String = "",
+    val email: String = "",
+    val address: String = "",
+    val pricingTier: String = "RETAIL",
+    val creditLimit: Double = 0.0,
+    val openingBalance: Double = 0.0,
+    val notes: String = "",
+    val performedById: String = "",
+    val performedByName: String = "",
     val createdAt: Long = 0L,
     val updatedAt: Long = 0L,
     val isDeleted: Boolean = false
@@ -140,6 +241,7 @@ data class InvoiceDto(
     val id: String,
     val businessId: String,
     val invoiceNumber: String,
+    val customerId: String = "",
     val customerName: String,
     val customerPhone: String = "",
     val customerEmail: String = "",
@@ -186,6 +288,7 @@ data class SyncPushRequest(
     val deviceId: String,
     val pushedAt: Long = System.currentTimeMillis(),
     val businesses: List<BusinessDto> = emptyList(),
+    val customers: List<CustomerDto> = emptyList(),
     val products: List<ProductDto> = emptyList(),
     val invoices: List<InvoiceDto> = emptyList(),
     val expenses: List<ExpenseDto> = emptyList()
@@ -203,6 +306,7 @@ data class SyncPullResponse(
     val serverTime: Long = System.currentTimeMillis(),
     val user: AuthUserDto? = null,
     val businesses: List<BusinessDto> = emptyList(),
+    val customers: List<CustomerDto> = emptyList(),
     val products: List<ProductDto> = emptyList(),
     val invoices: List<InvoiceDto> = emptyList(),
     val expenses: List<ExpenseDto> = emptyList()
@@ -229,6 +333,8 @@ fun BusinessEntity.toDto() = BusinessDto(
     expenseCategoriesJson = expenseCategoriesJson,
     paymentMethodsJson = paymentMethodsJson,
     pricingTierLabelsJson = pricingTierLabelsJson,
+    taxPresetsJson = taxPresetsJson,
+    pricingRulesJson = pricingRulesJson,
     defaultTaxRate = defaultTaxRate,
     invoiceFooter = invoiceFooter,
     createdAt = createdAt,
@@ -256,9 +362,48 @@ fun BusinessDto.toEntity(existingLogoPath: String? = null) = BusinessEntity(
     expenseCategoriesJson = expenseCategoriesJson,
     paymentMethodsJson = paymentMethodsJson,
     pricingTierLabelsJson = pricingTierLabelsJson,
+    taxPresetsJson = taxPresetsJson,
+    pricingRulesJson = pricingRulesJson,
     defaultTaxRate = defaultTaxRate,
     invoiceFooter = invoiceFooter,
     logoFilePath = existingLogoPath,
+    createdAt = createdAt,
+    updatedAt = updatedAt,
+    isDeleted = isDeleted,
+    syncStatus = SyncStatus.SYNCED.name
+)
+
+fun CustomerEntity.toDto() = CustomerDto(
+    id = id,
+    businessId = businessId,
+    name = name,
+    phone = phone,
+    email = email,
+    address = address,
+    pricingTier = pricingTier,
+    creditLimit = creditLimit,
+    openingBalance = openingBalance,
+    notes = notes,
+    performedById = performedById,
+    performedByName = performedByName,
+    createdAt = createdAt,
+    updatedAt = updatedAt,
+    isDeleted = isDeleted
+)
+
+fun CustomerDto.toEntity() = CustomerEntity(
+    id = id,
+    businessId = businessId,
+    name = name,
+    phone = phone,
+    email = email,
+    address = address,
+    pricingTier = pricingTier,
+    creditLimit = creditLimit,
+    openingBalance = openingBalance,
+    notes = notes,
+    performedById = performedById,
+    performedByName = performedByName,
     createdAt = createdAt,
     updatedAt = updatedAt,
     isDeleted = isDeleted,
@@ -316,6 +461,7 @@ fun InvoiceWithItems.toDto() = InvoiceDto(
     id = invoice.id,
     businessId = invoice.businessId,
     invoiceNumber = invoice.invoiceNumber,
+    customerId = invoice.customerId,
     customerName = invoice.customerName,
     customerPhone = invoice.customerPhone,
     customerEmail = invoice.customerEmail,
@@ -357,6 +503,7 @@ fun InvoiceDto.toEntityPair(): Pair<InvoiceEntity, List<InvoiceItemEntity>> {
         id = id,
         businessId = businessId,
         invoiceNumber = invoiceNumber,
+        customerId = customerId,
         customerName = customerName,
         customerPhone = customerPhone,
         customerEmail = customerEmail,

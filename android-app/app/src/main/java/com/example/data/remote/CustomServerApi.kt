@@ -11,8 +11,11 @@ import okhttp3.WebSocketListener
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.PUT
+import retrofit2.http.Path
 import retrofit2.http.Query
 import java.util.concurrent.TimeUnit
 
@@ -31,6 +34,31 @@ interface CustomServerApi {
 
     @POST("api/v1/auth/logout")
     suspend fun logout(): LogoutResponse
+
+    // Business Owner In-App Team & Custom Roles Management
+    @GET("api/v1/team")
+    suspend fun getTeamOverview(@Query("businessId") businessId: String): retrofit2.Response<TeamOverviewResponse>
+
+    @POST("api/v1/team/roles")
+    suspend fun createTeamRole(@Body request: SaveTeamRoleRequest): retrofit2.Response<TeamActionResponse>
+
+    @PUT("api/v1/team/roles/{id}")
+    suspend fun updateTeamRole(@Path("id") id: String, @Body request: SaveTeamRoleRequest): retrofit2.Response<TeamActionResponse>
+
+    @DELETE("api/v1/team/roles/{id}")
+    suspend fun deleteTeamRole(@Path("id") id: String, @Query("businessId") businessId: String): retrofit2.Response<TeamActionResponse>
+
+    @POST("api/v1/team/users")
+    suspend fun createTeamUser(@Body request: SaveTeamUserRequest): retrofit2.Response<TeamActionResponse>
+
+    @PUT("api/v1/team/users/{id}")
+    suspend fun updateTeamUser(@Path("id") id: String, @Body request: SaveTeamUserRequest): retrofit2.Response<TeamActionResponse>
+
+    @POST("api/v1/team/users/{id}/toggle")
+    suspend fun toggleTeamUser(@Path("id") id: String, @Body request: ToggleTeamUserRequest): retrofit2.Response<TeamActionResponse>
+
+    @DELETE("api/v1/team/users/{id}")
+    suspend fun deleteTeamUser(@Path("id") id: String, @Query("businessId") businessId: String): retrofit2.Response<TeamActionResponse>
 
     @POST("api/v1/sync/push")
     suspend fun pushSync(@Body request: SyncPushRequest): SyncPushResponse

@@ -47,11 +47,11 @@ class RbacService
             [
                 'id' => 'role-business-owner',
                 'name' => 'Business Owner',
-                'description' => 'Full control and customization of the assigned business(es).',
+                'description' => 'Full control, customization, and team/role management for assigned business(es).',
                 'permissions' => [
                     'view_dashboard', 'manage_inventory', 'use_pos', 'collect_credit',
                     'return_sales', 'manage_expenses', 'view_reports', 'export_data',
-                    'manage_businesses', 'manage_settings',
+                    'manage_businesses', 'manage_settings', 'manage_team',
                 ],
                 'is_system' => false,
             ],
@@ -97,6 +97,18 @@ class RbacService
         DB::table('roles')->where('id', 'role-super-admin')->update([
             'permissions_json' => json_encode($this->allPermissionKeys()),
         ]);
+
+        // Ensure existing Business Owner role also has manage_team enabled
+        $ownerRole = DB::table('roles')->where('id', 'role-business-owner')->first();
+        if ($ownerRole) {
+            $ownerPerms = json_decode((string) $ownerRole->permissions_json, true) ?: [];
+            if (!in_array('manage_team', $ownerPerms, true)) {
+                $ownerPerms[] = 'manage_team';
+                DB::table('roles')->where('id', 'role-business-owner')->update([
+                    'permissions_json' => json_encode(array_values(array_unique($ownerPerms))),
+                ]);
+            }
+        }
 
         // Bootstrap primary Super Admin from .env if no users exist yet
         $envEmail = strtolower(trim((string) config('sync.admin_email', 'admin@hassanagro.com')));

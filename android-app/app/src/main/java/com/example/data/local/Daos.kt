@@ -43,6 +43,36 @@ interface BusinessDao {
 }
 
 @Dao
+interface CustomerDao {
+    @Query("SELECT * FROM customers WHERE businessId = :businessId AND isDeleted = 0 ORDER BY name ASC")
+    fun observeByBusiness(businessId: String): Flow<List<CustomerEntity>>
+
+    @Query("SELECT * FROM customers WHERE isDeleted = 0 ORDER BY name ASC")
+    fun observeAllActive(): Flow<List<CustomerEntity>>
+
+    @Query("SELECT * FROM customers WHERE id = :id LIMIT 1")
+    suspend fun getById(id: String): CustomerEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(customer: CustomerEntity)
+
+    @Query("UPDATE customers SET isDeleted = 1, updatedAt = :timestamp, syncStatus = 'PENDING' WHERE id = :id")
+    suspend fun softDelete(id: String, timestamp: Long = System.currentTimeMillis())
+
+    @Query("SELECT * FROM customers WHERE syncStatus = 'PENDING'")
+    suspend fun getPendingSync(): List<CustomerEntity>
+
+    @Query("UPDATE customers SET syncStatus = 'SYNCED' WHERE id IN (:ids)")
+    suspend fun markSynced(ids: List<String>)
+
+    @Query("SELECT COUNT(*) FROM customers WHERE syncStatus = 'PENDING'")
+    fun observePendingCount(): Flow<Int>
+
+    @Query("DELETE FROM customers")
+    suspend fun deleteAll()
+}
+
+@Dao
 interface ProductDao {
     @Query("SELECT * FROM products WHERE businessId = :businessId AND isDeleted = 0 ORDER BY name ASC")
     fun observeByBusiness(businessId: String): Flow<List<ProductEntity>>

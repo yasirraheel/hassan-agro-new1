@@ -65,6 +65,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.local.BusinessEntity
+import com.example.data.local.CustomerEntity
 import com.example.data.local.ExpiryStatus
 import com.example.data.local.InvoicePaymentStatus
 import com.example.data.local.InvoiceWithItems
@@ -84,6 +85,7 @@ import com.example.ui.theme.MonoFigureMedium
 import com.example.ui.theme.SafeStockBg
 import com.example.ui.theme.SafeStockGreen
 import com.example.util.Formatters
+import com.example.util.InvoicePdfStyle
 import com.example.viewmodel.BillingDraftState
 import com.example.viewmodel.GeneratedInvoiceEvent
 import com.example.viewmodel.HeldCart
@@ -101,12 +103,17 @@ fun BillingScreen(
     activeBusiness: BusinessEntity,
     products: List<ProductEntity>,
     invoices: List<InvoiceWithItems>,
+    customers: List<CustomerEntity>,
     draft: BillingDraftState,
     heldCarts: List<HeldCart>,
     generatedInvoice: GeneratedInvoiceEvent?,
     canCreateSale: Boolean,
     canCollectCredit: Boolean,
     canReturnSale: Boolean,
+    onSelectSavedCustomer: (CustomerEntity?) -> Unit,
+    onToggleSaveCustomer: (Boolean) -> Unit,
+    onSaveCustomer: (CustomerEntity) -> Unit,
+    onDeleteCustomer: (String) -> Unit,
     onUpdateCustomer: (String, String, String) -> Unit,
     onSelectTier: (PricingTier) -> Unit,
     onUpdateTax: (Boolean, String) -> Unit,
@@ -123,6 +130,7 @@ fun BillingScreen(
     onRequestScanToCart: () -> Unit,
     onFinalizeInvoice: () -> Unit,
     onOpenPastInvoice: (InvoiceWithItems) -> Unit,
+    onSwitchInvoiceStyle: (InvoicePdfStyle) -> Unit,
     onRecordPayment: (String, Double) -> Unit,
     onReturnInvoice: (String) -> Unit,
     onGoToInventory: () -> Unit,
@@ -198,15 +206,40 @@ fun BillingScreen(
                     SegmentedButton(
                         selected = selectedTab == 0,
                         onClick = { selectedTab = 0 },
-                        shape = SegmentedButtonDefaults.itemShape(0, 2),
+                        shape = SegmentedButtonDefaults.itemShape(0, 3),
                         modifier = Modifier.testTag("billing_tab_new")
-                    ) { Text("POS Counter", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
+                    ) { Text("POS", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
                     SegmentedButton(
                         selected = selectedTab == 1,
                         onClick = { selectedTab = 1 },
-                        shape = SegmentedButtonDefaults.itemShape(1, 2),
+                        shape = SegmentedButtonDefaults.itemShape(1, 3),
                         modifier = Modifier.testTag("billing_tab_history")
                     ) { Text("Sales (${invoices.size})", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
+                    SegmentedButton(
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 },
+                        shape = SegmentedButtonDefaults.itemShape(2, 3),
+                        modifier = Modifier.testTag("billing_tab_customers")
+                    ) { Text("Customers (${customers.size})", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
+                }
+            } else {
+                SingleChoiceSegmentedButtonRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                ) {
+                    SegmentedButton(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        shape = SegmentedButtonDefaults.itemShape(0, 2),
+                        modifier = Modifier.testTag("billing_tab_history")
+                    ) { Text("Sales (${invoices.size})", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
+                    SegmentedButton(
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 },
+                        shape = SegmentedButtonDefaults.itemShape(1, 2),
+                        modifier = Modifier.testTag("billing_tab_customers")
+                    ) { Text("Customers (${customers.size})", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
                 }
             }
 
@@ -403,7 +436,7 @@ fun BillingScreen(
                         }
                     }
                 }
-            } else {
+            } else if (selectedTab == 1) {
                 Column(modifier = Modifier.weight(1f)) {
                     Row(
                         modifier = Modifier
@@ -462,6 +495,20 @@ fun BillingScreen(
                         }
                     }
                 }
+            } else {
+                CustomersTabContent(
+                    activeBusiness = activeBusiness,
+                    customers = customers,
+                    invoices = invoices,
+                    canCreateSale = canCreateSale,
+                    onBillCustomer = { customer ->
+                        onSelectSavedCustomer(customer)
+                        if (canCreateSale) selectedTab = 0
+                    },
+                    onSaveCustomer = onSaveCustomer,
+                    onDeleteCustomer = onDeleteCustomer,
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
     }
@@ -470,6 +517,10 @@ fun BillingScreen(
         PosCheckoutSheet(
             business = activeBusiness,
             draft = draft,
+            customers = customers,
+            invoices = invoices,
+            onSelectSavedCustomer = onSelectSavedCustomer,
+            onToggleSaveCustomer = onToggleSaveCustomer,
             onUpdateCustomer = onUpdateCustomer,
             onSelectTier = onSelectTier,
             onUpdateTax = onUpdateTax,
@@ -515,6 +566,7 @@ fun BillingScreen(
     if (generatedInvoice != null) {
         InvoiceShareDialog(
             event = generatedInvoice,
+            onSwitchStyle = onSwitchInvoiceStyle,
             onDismiss = onDismissGeneratedInvoice
         )
     }

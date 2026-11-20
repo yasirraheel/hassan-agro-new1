@@ -4,7 +4,11 @@
 @section('content')
 <div class="toolbar" style="justify-content:space-between;">
     <div style="color:var(--muted); font-size:13.5px;">
-        Multiple admins/staff can log into the same business. Every sale, expense, and stock update records the exact admin name who performed it.
+        @if($selectedBizId !== '' && isset($bizMap[$selectedBizId]))
+            Showing owners &amp; staff for <strong style="color:var(--primary);">{{ $bizMap[$selectedBizId]->name }}</strong>. Switch to "All Businesses" in the top bar to view every business's users.
+        @else
+            Showing users across <strong>All Businesses</strong> — every user clearly displays which business(es) they belong to and whether they are an Owner or Staff.
+        @endif
     </div>
     <button type="button" class="btn btn-primary" onclick="openUserModal()">+ Add Admin / Staff</button>
 </div>
@@ -22,20 +26,30 @@
                 </tr>
             </thead>
             <tbody>
-                @foreach($users as $u)
+                @forelse($users as $u)
                     <tr>
                         <td>
-                            <strong>{{ $u->name }}</strong>
+                            <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                                <strong>{{ $u->name }}</strong>
+                                @if($u->id === 'user-super-admin')
+                                    <span class="badge badge-primary">Super Admin</span>
+                                @elseif($u->is_owner)
+                                    <span class="badge badge-amber">Owner</span>
+                                @endif
+                            </div>
                             <div style="font-size:12px; color:var(--muted);">{{ $u->email }}</div>
                         </td>
                         <td><span class="badge badge-primary">{{ $u->role_name }}</span></td>
                         <td>
                             @if(in_array('*', $u->business_ids, true))
-                                <span class="badge badge-green">All Businesses</span>
+                                <span class="badge badge-green">All Businesses (Global)</span>
                             @else
                                 <div style="display:flex; flex-wrap:wrap; gap:4px;">
                                     @foreach($u->business_ids as $bId)
-                                        <span class="badge badge-blue">{{ $bizMap[$bId]->name ?? $bId }}</span>
+                                        @php $isOwned = in_array($bId, $u->owned_business_ids ?? [], true); @endphp
+                                        <span class="badge {{ $isOwned ? 'badge-amber' : 'badge-blue' }}">
+                                            🏢 {{ $bizMap[$bId]->name ?? $bId }}{{ $isOwned ? ' (Owner)' : '' }}
+                                        </span>
                                     @endforeach
                                 </div>
                             @endif
@@ -74,7 +88,13 @@
                             @endif
                         </td>
                     </tr>
-                @endforeach
+                @empty
+                    <tr>
+                        <td colspan="5" style="text-align:center; padding:28px; color:var(--muted);">
+                            No owners or staff members assigned to this business yet. Click <strong>+ Add Admin / Staff</strong> to add one.
+                        </td>
+                    </tr>
+                @endforelse
             </tbody>
         </table>
     </div>
@@ -139,6 +159,7 @@
 <script>
 const userStoreUrl = "{{ route('admin.users.store') }}";
 const userBaseUrl = "{{ url('/admin/users') }}";
+const currentSelectedBizId = "{{ $selectedBizId }}";
 
 function toggleBizBoxes() {
     const all = document.getElementById('usr_all_biz').checked;
@@ -173,6 +194,7 @@ function openUserModal(u = null) {
         pass.required = true;
         document.getElementById('usr_pass_label').textContent = 'Password (min 6 chars) *';
         document.getElementById('usr_all_biz').checked = false;
+        cbs.forEach(cb => cb.checked = (currentSelectedBizId !== '' && cb.value === currentSelectedBizId));
     }
     toggleBizBoxes();
     openModal('userModal');
