@@ -110,8 +110,7 @@ fun FormScreenDialog(
         Scaffold(
             modifier = Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
-                .imePadding(),
+                .statusBarsPadding(),
             containerColor = MaterialTheme.colorScheme.surface,
             topBar = {
                 Column {
@@ -174,6 +173,7 @@ fun FormScreenDialog(
                     .fillMaxSize()
                     .padding(innerPadding)
                     .verticalScroll(rememberScrollState())
+                    .imePadding()
                     .padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 content = content

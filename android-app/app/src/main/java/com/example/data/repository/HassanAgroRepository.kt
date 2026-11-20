@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import retrofit2.HttpException
 import java.io.File
 import java.io.FileOutputStream
 
@@ -355,7 +356,11 @@ class HassanAgroRepository(
         } catch (e: Exception) {
             SyncResult(
                 success = false,
-                message = "Sync failed (offline data safe): ${e.localizedMessage ?: "Network error"}"
+                message = if (e is HttpException && e.code() == 401) {
+                    "Sync failed (401): API token does not match the server. Check Settings → Bearer API Token / Key."
+                } else {
+                    "Sync failed (offline data safe): ${e.localizedMessage ?: "Network error"}"
+                }
             )
         }
     }

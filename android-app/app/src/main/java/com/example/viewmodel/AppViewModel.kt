@@ -644,6 +644,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun saveAndSyncServerConfig(
+        baseUrl: String,
+        apiToken: String,
+        wsUrl: String,
+        autoSyncEnabled: Boolean
+    ) {
+        if (_syncUiState.value.isSyncing) return
+        viewModelScope.launch {
+            repository.saveServerConfig(baseUrl, apiToken, wsUrl, autoSyncEnabled)
+            syncNow(silent = false)
+        }
+    }
+
     fun testServerConnection(baseUrl: String, apiToken: String) {
         viewModelScope.launch {
             _syncUiState.update { it.copy(isTestingConnection = true, lastError = null) }

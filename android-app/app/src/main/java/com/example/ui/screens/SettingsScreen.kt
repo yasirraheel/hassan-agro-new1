@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -90,7 +89,7 @@ fun SettingsScreen(
     onUpdateBusinessLogo: (String, Uri) -> Unit,
     onSaveServerConfig: (String, String, String, Boolean) -> Unit,
     onTestServerConnection: (String, String) -> Unit,
-    onSyncNow: () -> Unit,
+    onSaveAndSync: (String, String, String, Boolean) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -302,7 +301,7 @@ fun SettingsScreen(
                     pendingSyncCount = pendingSyncCount,
                     onSaveServerConfig = onSaveServerConfig,
                     onTestConnection = onTestServerConnection,
-                    onSyncNow = onSyncNow
+                    onSaveAndSync = onSaveAndSync
                 )
             }
         }
@@ -331,7 +330,7 @@ private fun ServerSyncConfigTab(
     pendingSyncCount: Int,
     onSaveServerConfig: (String, String, String, Boolean) -> Unit,
     onTestConnection: (String, String) -> Unit,
-    onSyncNow: () -> Unit
+    onSaveAndSync: (String, String, String, Boolean) -> Unit
 ) {
     var baseUrl by remember(serverConfig.serverBaseUrl) { mutableStateOf(serverConfig.serverBaseUrl) }
     var apiToken by remember(serverConfig.apiToken) { mutableStateOf(serverConfig.apiToken) }
@@ -342,7 +341,6 @@ private fun ServerSyncConfigTab(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .imePadding()
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -470,8 +468,7 @@ private fun ServerSyncConfigTab(
 
                 Button(
                     onClick = {
-                        onSaveServerConfig(baseUrl, apiToken, wsUrl, autoSync)
-                        onSyncNow()
+                        onSaveAndSync(baseUrl, apiToken, wsUrl, autoSync)
                     },
                     enabled = !syncState.isSyncing,
                     modifier = Modifier
