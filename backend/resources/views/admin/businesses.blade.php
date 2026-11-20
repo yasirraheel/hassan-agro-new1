@@ -34,6 +34,14 @@
                         $bObj['product_categories_csv'] = implode(', ', json_decode((string)($b->product_categories_json ?? ''), true) ?: []);
                         $bObj['expense_categories_csv'] = implode(', ', json_decode((string)($b->expense_categories_json ?? ''), true) ?: []);
                         $bObj['payment_methods_csv'] = implode(', ', json_decode((string)($b->payment_methods_json ?? ''), true) ?: []);
+                        $bObj['pricing_rules'] = json_decode((string)($b->pricing_rules_json ?? ''), true) ?: [
+                            'ownerMarginMode' => 'PERCENT',
+                            'ownerMarginValue' => 5,
+                            'distributorStep' => 0,
+                            'wholesalerStep' => 5,
+                            'retailStep' => 12,
+                            'mrpStep' => 20,
+                        ];
                     @endphp
                     <tr>
                         <td>
@@ -184,6 +192,37 @@
                     <label>Payment Methods (comma-separated)</label>
                     <input class="input" name="payment_methods_csv" id="biz_pay_methods">
                 </div>
+                <div class="field form-full" style="border-top:1px solid var(--border); padding-top:14px;">
+                    <label style="font-weight:700;">Default Profit Margin &amp; 4-Tier Auto-Pricing</label>
+                    <div style="font-size:12px; color:var(--muted);">Automatically populates MRP, Distributor, Wholesaler &amp; Retail prices whenever a Purchase Cost is entered.</div>
+                </div>
+                <div class="field">
+                    <label>Profit Margin Mode</label>
+                    <select name="owner_margin_mode" id="biz_margin_mode">
+                        <option value="PERCENT">Percentage (%)</option>
+                        <option value="FLAT">Flat Amount</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label>Base Profit Margin (% or Flat)</label>
+                    <input class="input" type="number" step="0.01" min="0" name="owner_margin_value" id="biz_margin_val" value="5">
+                </div>
+                <div class="field">
+                    <label>Distributor Step (+%)</label>
+                    <input class="input" type="number" step="0.01" min="0" name="distributor_step" id="biz_dist_step" value="0">
+                </div>
+                <div class="field">
+                    <label>Wholesaler Step (+%)</label>
+                    <input class="input" type="number" step="0.01" min="0" name="wholesaler_step" id="biz_whls_step" value="5">
+                </div>
+                <div class="field">
+                    <label>Retail Step (+%)</label>
+                    <input class="input" type="number" step="0.01" min="0" name="retail_step" id="biz_retail_step" value="12">
+                </div>
+                <div class="field">
+                    <label>MRP Step (+%)</label>
+                    <input class="input" type="number" step="0.01" min="0" name="mrp_step" id="biz_mrp_step" value="20">
+                </div>
                 <div class="field form-full">
                     <label>Address</label>
                     <input class="input" name="address" id="biz_address">
@@ -252,6 +291,13 @@ function openBusinessModal(biz = null) {
         document.getElementById('biz_pay_methods').value = biz.payment_methods_csv || '';
         document.getElementById('biz_address').value = biz.address || '';
         document.getElementById('biz_footer').value = biz.invoice_footer || '';
+        const pr = biz.pricing_rules || {};
+        document.getElementById('biz_margin_mode').value = (pr.ownerMarginMode || 'PERCENT').toUpperCase();
+        document.getElementById('biz_margin_val').value = pr.ownerMarginValue ?? 5;
+        document.getElementById('biz_dist_step').value = pr.distributorStep ?? 0;
+        document.getElementById('biz_whls_step').value = pr.wholesalerStep ?? 5;
+        document.getElementById('biz_retail_step').value = pr.retailStep ?? 12;
+        document.getElementById('biz_mrp_step').value = pr.mrpStep ?? 20;
     } else {
         document.getElementById('bizModalTitle').textContent = 'Add & Customize Business';
         form.action = bizStoreUrl;
@@ -264,6 +310,12 @@ function openBusinessModal(biz = null) {
         document.getElementById('biz_type').value = 'GENERAL';
         document.getElementById('biz_currency').value = 'Rs.';
         document.getElementById('biz_prefix').value = 'BM';
+        document.getElementById('biz_margin_mode').value = 'PERCENT';
+        document.getElementById('biz_margin_val').value = '5';
+        document.getElementById('biz_dist_step').value = '0';
+        document.getElementById('biz_whls_step').value = '5';
+        document.getElementById('biz_retail_step').value = '12';
+        document.getElementById('biz_mrp_step').value = '20';
         applyPreset('GENERAL');
     }
     openModal('businessModal');

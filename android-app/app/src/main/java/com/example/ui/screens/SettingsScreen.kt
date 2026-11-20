@@ -398,6 +398,21 @@ fun SettingsScreen(
                         }
                     }
 
+                    // Quick-Access Default Profit Margin & 4-Tier Auto-Pricing Settings Card
+                    if (canManageBusinesses || canManageSettings) {
+                        item {
+                            QuickPricingMarginSettingsCard(
+                                business = activeBusiness,
+                                onSaveRules = { updatedRules ->
+                                    val updated = activeBusiness.copy(
+                                        pricingRulesJson = CustomizationJson.encodePricingRules(updatedRules)
+                                    )
+                                    onSaveBusiness(updated, false)
+                                }
+                            )
+                        }
+                    }
+
                     // Simple 1-tap Sync button for restricted staff (no server config tinkering)
                     if (isRestrictedStaff) {
                         item {
@@ -1472,3 +1487,201 @@ fun BusinessProfileEditorSheet(
         Spacer(Modifier.height(12.dp))
     }
 }
+
+@Composable
+private fun QuickPricingMarginSettingsCard(
+    business: BusinessEntity,
+    onSaveRules: (PricingMarginRules) -> Unit
+) {
+    val savedRules = remember(business.id, business.pricingRulesJson) { business.pricingRules() }
+    val currency = business.resolvedCurrency()
+    var expanded by remember(business.id) { mutableStateOf(false) }
+
+    var marginMode by remember(business.id, business.pricingRulesJson) { mutableStateOf(savedRules.ownerMarginMode) }
+    var ownerMargin by remember(business.id, business.pricingRulesJson) {
+        mutableStateOf(Formatters.formatDecimal(savedRules.ownerMarginValue))
+    }
+    var distStep by remember(business.id, business.pricingRulesJson) {
+        mutableStateOf(Formatters.formatDecimal(savedRules.distributorStep))
+    }
+    var whlsStep by remember(business.id, business.pricingRulesJson) {
+        mutableStateOf(Formatters.formatDecimal(savedRules.wholesalerStep))
+    }
+    var retailStep by remember(business.id, business.pricingRulesJson) {
+        mutableStateOf(Formatters.formatDecimal(savedRules.retailStep))
+    }
+    var mrpStep by remember(business.id, business.pricingRulesJson) {
+        mutableStateOf(Formatters.formatDecimal(savedRules.mrpStep))
+    }
+
+    val previewRules = PricingMarginRules(
+        ownerMarginMode = marginMode,
+        ownerMarginValue = ownerMargin.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0,
+        distributorStep = distStep.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0,
+        wholesalerStep = whlsStep.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0,
+        retailStep = retailStep.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0,
+        mrpStep = mrpStep.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
+    )
+
+    Surface(
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .testTag("settings_pricing_margin_header"),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Icon(
+                        Icons.Default.AutoFixHigh,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "Product Profit Margin & Auto-Pricing",
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "Base: ${Formatters.formatDecimal(savedRules.ownerMarginValue)}${if (savedRules.ownerMarginMode == "FLAT") " $currency" else "%"} • Dist +${Formatters.formatDecimal(savedRules.distributorStep)}% • Whls +${Formatters.formatDecimal(savedRules.wholesalerStep)}% • Retail +${Formatters.formatDecimal(savedRules.retailStep)}% • MRP +${Formatters.formatDecimal(savedRules.mrpStep)}%",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                Text(
+                    text = if (expanded) "Hide" else "Edit",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            AnimatedVisibility(visible = expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Text(
+                        text = "Applied automatically whenever you enter a Purchase Cost while creating products.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        AgriFilterChip(
+                            selected = marginMode == "PERCENT",
+                            onClick = { marginMode = "PERCENT" },
+                            label = "Margin %"
+                        )
+                        AgriFilterChip(
+                            selected = marginMode == "FLAT",
+                            onClick = { marginMode = "FLAT" },
+                            label = "Flat $currency"
+                        )
+                        OutlinedTextField(
+                            value = ownerMargin,
+                            onValueChange = { ownerMargin = it },
+                            label = {
+                                Text(
+                                    if (marginMode == "FLAT") "Base Profit ($currency)" else "Profit Margin (%)",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("settings_quick_margin_input")
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = distStep,
+                            onValueChange = { distStep = it },
+                            label = { Text("${business.tierLabel(PricingTier.DISTRIBUTOR)} +%", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = whlsStep,
+                            onValueChange = { whlsStep = it },
+                            label = { Text("${business.tierLabel(PricingTier.WHOLESALER)} +%", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = retailStep,
+                            onValueChange = { retailStep = it },
+                            label = { Text("${business.tierLabel(PricingTier.RETAIL)} +%", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = mrpStep,
+                            onValueChange = { mrpStep = it },
+                            label = { Text("${business.tierLabel(PricingTier.MRP)} +%", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    val sample = com.example.data.local.calculateSuggestedTierPrices(
+                        purchasePrice = 1000.0,
+                        taxRatePercent = 0.0,
+                        taxIncludedInCost = true,
+                        marginMode = previewRules.ownerMarginMode,
+                        marginValue = previewRules.ownerMarginValue,
+                        rules = previewRules
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                    ) {
+                        Text(
+                            text = "Preview on Cost 1,000 → ${business.tierLabel(PricingTier.DISTRIBUTOR)}: ${Formatters.formatDecimal(sample.distributorPrice)} • ${business.tierLabel(PricingTier.WHOLESALER)}: ${Formatters.formatDecimal(sample.wholesalerPrice)} • ${business.tierLabel(PricingTier.RETAIL)}: ${Formatters.formatDecimal(sample.retailPrice)} • ${business.tierLabel(PricingTier.MRP)}: ${Formatters.formatDecimal(sample.mrpPrice)}",
+                            style = MonoCodeSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+
+                    Button(
+                        onClick = {
+                            onSaveRules(previewRules)
+                            expanded = false
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("settings_save_pricing_rules_btn")
+                    ) {
+                        Text("Save Profit Margin Defaults", maxLines = 1, softWrap = false)
+                    }
+                }
+            }
+        }
+    }
+}
+

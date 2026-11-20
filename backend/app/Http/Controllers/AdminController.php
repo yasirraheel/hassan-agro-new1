@@ -354,6 +354,12 @@ class AdminController extends Controller
             'owner_email' => ['nullable', 'email', 'max:191'],
             'owner_password' => ['nullable', 'string', 'min:6', 'max:100'],
             'owner_password_confirmation' => ['nullable', 'same:owner_password'],
+            'owner_margin_mode' => ['nullable', 'in:PERCENT,FLAT'],
+            'owner_margin_value' => ['nullable', 'numeric', 'min:0'],
+            'distributor_step' => ['nullable', 'numeric', 'min:0'],
+            'wholesaler_step' => ['nullable', 'numeric', 'min:0'],
+            'retail_step' => ['nullable', 'numeric', 'min:0'],
+            'mrp_step' => ['nullable', 'numeric', 'min:0'],
         ]);
 
         $presets = config('sync.business_presets', []);
@@ -362,7 +368,7 @@ class AdminController extends Controller
 
         $now = $this->rbac->nowMs();
         $businessId = (string) Str::uuid();
-        DB::table('businesses')->insert([
+        $insertData = [
             'id' => $businessId,
             'name' => trim($data['name']),
             'tagline' => (string) ($data['tagline'] ?: ($preset['tagline'] ?? '')),
@@ -388,7 +394,11 @@ class AdminController extends Controller
             'updated_at_ms' => $now,
             'server_modified_at_ms' => $now,
             'is_deleted' => false,
-        ]);
+        ];
+        if (\Illuminate\Support\Facades\Schema::hasColumn('businesses', 'pricing_rules_json')) {
+            $insertData['pricing_rules_json'] = $this->buildPricingRulesJson($data);
+        }
+        DB::table('businesses')->insert($insertData);
 
         try {
             $this->syncBusinessOwner($businessId, trim($data['name']), $data);
@@ -397,7 +407,53 @@ class AdminController extends Controller
             return back()->withInput()->with('error', $e->getMessage());
         }
 
-        return redirect()->route('admin.businesses')->with('success', 'Business created with custom theme & categories and queued for sync.');
+        return redirect()->route('admin.businesses')->with('success', 'Business created with custom theme, pricing margin & categories.');
+    }
+
+    private function buildPricingRulesJson(array $data): string
+    {
+        return json_encode([
+            'ownerMarginMode' => strtoupper((string) ($data['owner_margin_mode'] ?? 'PERCENT')) === 'FLAT' ? 'FLAT' : 'PERCENT',
+            'ownerMarginValue' => max(0.0, (float) ($data['owner_margin_value'] ?? 5.0)),
+            'distributorStep' => max(0.0, (float) ($data['distributor_step'] ?? 0.0)),
+            'wholesalerStep' => max(0.0, (float) ($data['wholesaler_step'] ?? 5.0)),
+            'retailStep' => max(0.0, (float) ($data['retail_step'] ?? 12.0)),
+            'mrpStep' => max(0.0, (float) ($data['mrp_step'] ?? 20.0)),
+        ]);
+    }
+
+    private function computeSuggestedTiersForBusiness(string $businessId, float $purchasePrice): array
+    {
+        $cost = max(0.0, $purchasePrice);
+        $rules = [
+            'ownerMarginMode' => 'PERCENT',
+            'ownerMarginValue' => 5.0,
+            'distributorStep' => 0.0,
+            'wholesalerStep' => 5.0,
+            'retailStep' => 12.0,
+            'mrpStep' => 20.0,
+        ];
+        if (\Illuminate\Support\Facades\Schema::hasColumn('businesses', 'pricing_rules_json')) {
+            $biz = DB::table('businesses')->where('id', $businessId)->first();
+            $decoded = $biz && !empty($biz->pricing_rules_json)
+                ? json_decode((string) $biz->pricing_rules_json, true)
+                : null;
+            if (is_array($decoded)) {
+                $rules = array_merge($rules, $decoded);
+            }
+        }
+        $mode = strtoupper((string) ($rules['ownerMarginMode'] ?? 'PERCENT'));
+        $marginVal = max(0.0, (float) ($rules['ownerMarginValue'] ?? 5.0));
+        $baseFloor = $mode === 'FLAT'
+            ? ($cost + $marginVal)
+            : ($cost * (1.0 + $marginVal / 100.0));
+
+        return [
+            'distributor' => round($baseFloor * (1.0 + max(0.0, (float) ($rules['distributorStep'] ?? 0.0)) / 100.0), 2),
+            'wholesaler' => round($baseFloor * (1.0 + max(0.0, (float) ($rules['wholesalerStep'] ?? 5.0)) / 100.0), 2),
+            'retail' => round($baseFloor * (1.0 + max(0.0, (float) ($rules['retailStep'] ?? 12.0)) / 100.0), 2),
+            'mrp' => round($baseFloor * (1.0 + max(0.0, (float) ($rules['mrpStep'] ?? 20.0)) / 100.0), 2),
+        ];
     }
 
     public function updateBusiness(Request $request, string $id): RedirectResponse
@@ -424,6 +480,12 @@ class AdminController extends Controller
             'owner_email' => ['nullable', 'email', 'max:191'],
             'owner_password' => ['nullable', 'string', 'min:6', 'max:100'],
             'owner_password_confirmation' => ['nullable', 'same:owner_password'],
+            'owner_margin_mode' => ['nullable', 'in:PERCENT,FLAT'],
+            'owner_margin_value' => ['nullable', 'numeric', 'min:0'],
+            'distributor_step' => ['nullable', 'numeric', 'min:0'],
+            'wholesaler_step' => ['nullable', 'numeric', 'min:0'],
+            'retail_step' => ['nullable', 'numeric', 'min:0'],
+            'mrp_step' => ['nullable', 'numeric', 'min:0'],
         ]);
 
         $presets = config('sync.business_presets', []);
@@ -441,7 +503,7 @@ class AdminController extends Controller
             return back()->withInput()->with('error', $e->getMessage());
         }
 
-        DB::table('businesses')->where('id', $id)->update([
+        $updateData = [
             'name' => trim($data['name']),
             'tagline' => (string) ($data['tagline'] ?? ''),
             'phone' => (string) ($data['phone'] ?? ''),
@@ -463,9 +525,13 @@ class AdminController extends Controller
             'invoice_footer' => (string) ($data['invoice_footer'] ?? ''),
             'updated_at_ms' => $now,
             'server_modified_at_ms' => $now,
-        ]);
+        ];
+        if (\Illuminate\Support\Facades\Schema::hasColumn('businesses', 'pricing_rules_json')) {
+            $updateData['pricing_rules_json'] = $this->buildPricingRulesJson($data);
+        }
+        DB::table('businesses')->where('id', $id)->update($updateData);
 
-        return redirect()->route('admin.businesses')->with('success', 'Business profile, theme & customization updated and synced.');
+        return redirect()->route('admin.businesses')->with('success', 'Business profile, theme & pricing margins updated and synced.');
     }
 
     public function deleteBusiness(string $id): RedirectResponse
@@ -543,11 +609,27 @@ class AdminController extends Controller
             'mrp_price' => ['nullable', 'numeric', 'min:0'],
             'distributor_price' => ['nullable', 'numeric', 'min:0'],
             'wholesaler_price' => ['nullable', 'numeric', 'min:0'],
-            'retail_price' => ['required', 'numeric', 'min:0'],
+            'retail_price' => ['nullable', 'numeric', 'min:0'],
         ]);
 
         $now = $this->rbac->nowMs();
         $expiryMs = Carbon::parse($data['expiry_date'])->endOfDay()->getTimestampMs();
+        $purchasePrice = (float) ($data['purchase_price'] ?? 0);
+        $suggested = $purchasePrice > 0
+            ? $this->computeSuggestedTiersForBusiness($data['business_id'], $purchasePrice)
+            : ['distributor' => 0.0, 'wholesaler' => 0.0, 'retail' => 0.0, 'mrp' => 0.0];
+
+        $mrpPrice = (float) ($data['mrp_price'] ?? 0);
+        $distPrice = (float) ($data['distributor_price'] ?? 0);
+        $whlsPrice = (float) ($data['wholesaler_price'] ?? 0);
+        $retailPrice = (float) ($data['retail_price'] ?? 0);
+
+        if ($purchasePrice > 0) {
+            if ($mrpPrice <= 0) $mrpPrice = $suggested['mrp'];
+            if ($distPrice <= 0) $distPrice = $suggested['distributor'];
+            if ($whlsPrice <= 0) $whlsPrice = $suggested['wholesaler'];
+            if ($retailPrice <= 0) $retailPrice = $suggested['retail'];
+        }
 
         DB::table('products')->insert([
             'id' => (string) Str::uuid(),
@@ -561,11 +643,11 @@ class AdminController extends Controller
             'expiry_date_millis' => $expiryMs,
             'stock_qty' => (int) $data['stock_qty'],
             'low_stock_threshold' => (int) $data['low_stock_threshold'],
-            'purchase_price' => (float) ($data['purchase_price'] ?? 0),
-            'mrp_price' => (float) ($data['mrp_price'] ?? 0),
-            'distributor_price' => (float) ($data['distributor_price'] ?? 0),
-            'wholesaler_price' => (float) ($data['wholesaler_price'] ?? 0),
-            'retail_price' => (float) $data['retail_price'],
+            'purchase_price' => $purchasePrice,
+            'mrp_price' => $mrpPrice,
+            'distributor_price' => $distPrice,
+            'wholesaler_price' => $whlsPrice,
+            'retail_price' => $retailPrice,
             'performed_by_id' => $this->currentAdminId($request),
             'performed_by_name' => $this->currentAdminName($request),
             'updated_at_ms' => $now,

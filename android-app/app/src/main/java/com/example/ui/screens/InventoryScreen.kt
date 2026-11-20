@@ -42,6 +42,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -502,15 +503,19 @@ private fun ProductEditorDialog(
     var whlsPrice by remember { mutableStateOf(existing?.wholesalerPrice?.takeIf { it > 0 }?.toString() ?: "") }
     var retailPrice by remember { mutableStateOf(existing?.retailPrice?.takeIf { it > 0 }?.toString() ?: "") }
 
-    // Smart Pricing Calculator state (Tax Preset + Owner Margin -> Auto-suggested 4 tiers)
-    var selectedTaxPercent by remember { mutableStateOf(0.0) }
-    var taxIncludedInCost by remember { mutableStateOf(false) }
-    var marginMode by remember { mutableStateOf(pricingRules.ownerMarginMode) }
-    var ownerMarginText by remember { mutableStateOf(Formatters.formatDecimal(pricingRules.ownerMarginValue)) }
-    var manualMrp by remember { mutableStateOf(existing != null) }
-    var manualDist by remember { mutableStateOf(existing != null) }
-    var manualWhls by remember { mutableStateOf(existing != null) }
-    var manualRetail by remember { mutableStateOf(existing != null) }
+    // Smart Pricing Calculator state (Tax Preset + Settings Profit Margin -> Auto-populated 4 tiers)
+    var selectedTaxPercent by remember(existing?.id, business.id) { mutableStateOf(0.0) }
+    var taxIncludedInCost by remember(existing?.id, business.id) { mutableStateOf(false) }
+    var marginMode by remember(existing?.id, business.id, business.pricingRulesJson) {
+        mutableStateOf(pricingRules.ownerMarginMode)
+    }
+    var ownerMarginText by remember(existing?.id, business.id, business.pricingRulesJson) {
+        mutableStateOf(Formatters.formatDecimal(pricingRules.ownerMarginValue))
+    }
+    var manualMrp by remember(existing?.id) { mutableStateOf(existing != null && existing.mrpPrice > 0.0) }
+    var manualDist by remember(existing?.id) { mutableStateOf(existing != null && existing.distributorPrice > 0.0) }
+    var manualWhls by remember(existing?.id) { mutableStateOf(existing != null && existing.wholesalerPrice > 0.0) }
+    var manualRetail by remember(existing?.id) { mutableStateOf(existing != null && existing.retailPrice > 0.0) }
 
     var showDatePicker by remember { mutableStateOf(false) }
     var validationError by remember { mutableStateOf<String?>(null) }
@@ -530,7 +535,13 @@ private fun ProductEditorDialog(
 
     fun applyAutoSuggestions(forceAll: Boolean = false) {
         val suggested = computeLiveSuggestion()
-        if (suggested.landedCost <= 0.0) return
+        if (suggested.landedCost <= 0.0) {
+            if (forceAll || !manualMrp) mrpPrice = ""
+            if (forceAll || !manualDist) distPrice = ""
+            if (forceAll || !manualWhls) whlsPrice = ""
+            if (forceAll || !manualRetail) retailPrice = ""
+            return
+        }
         if (forceAll || !manualMrp) {
             mrpPrice = Formatters.formatDecimal(suggested.mrpPrice)
             if (forceAll) manualMrp = false
@@ -549,6 +560,11 @@ private fun ProductEditorDialog(
         }
     }
 
+    // Automatically keep non-overridden 4-tier fields synced with Purchase Cost & Settings Profit Margin
+    LaunchedEffect(purchasePrice, selectedTaxPercent, taxIncludedInCost, marginMode, ownerMarginText, pricingRules) {
+        applyAutoSuggestions(forceAll = false)
+    }
+
     FormScreenDialog(
         title = if (existing == null) "Add Product" else "Edit Product",
         subtitle = business.name,
@@ -560,10 +576,20 @@ private fun ProductEditorDialog(
                         validationError = "Please enter the product name"
                         return@Button
                     }
-                    val mrp = mrpPrice.toDoubleOrNull() ?: 0.0
-                    val retail = retailPrice.toDoubleOrNull() ?: mrp
-                    val whls = whlsPrice.toDoubleOrNull() ?: retail
-                    val dist = distPrice.toDoubleOrNull() ?: whls
+                    val cost = purchasePrice.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
+                    val suggested = computeLiveSuggestion()
+                    val mrp = mrpPrice.toDoubleOrNull()?.takeIf { it > 0.0 }
+                        ?: suggested.mrpPrice.takeIf { cost > 0.0 }
+                        ?: 0.0
+                    val retail = retailPrice.toDoubleOrNull()?.takeIf { it > 0.0 }
+                        ?: suggested.retailPrice.takeIf { cost > 0.0 }
+                        ?: mrp
+                    val whls = whlsPrice.toDoubleOrNull()?.takeIf { it > 0.0 }
+                        ?: suggested.wholesalerPrice.takeIf { cost > 0.0 }
+                        ?: retail
+                    val dist = distPrice.toDoubleOrNull()?.takeIf { it > 0.0 }
+                        ?: suggested.distributorPrice.takeIf { cost > 0.0 }
+                        ?: whls
                     val entity = (existing ?: ProductEntity(
                         businessId = business.id,
                         name = name.trim(),
@@ -579,7 +605,7 @@ private fun ProductEditorDialog(
                         expiryDateMillis = expiryMillis,
                         stockQty = stockQty.toIntOrNull() ?: 0,
                         lowStockThreshold = lowStock.toIntOrNull() ?: 10,
-                        purchasePrice = purchasePrice.toDoubleOrNull() ?: 0.0,
+                        purchasePrice = cost,
                         mrpPrice = mrp,
                         distributorPrice = dist,
                         wholesalerPrice = whls,
@@ -843,32 +869,50 @@ private fun ProductEditorDialog(
                         shape = RoundedCornerShape(8.dp),
                         color = SafeStockBg
                     ) {
-                        Row(
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 10.dp, vertical = 6.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Landed Cost: ${Formatters.formatPkr(liveSuggestion.landedCost, currency)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SafeStockGreen,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Base Floor: ${Formatters.formatPkr(liveSuggestion.baseFloorPrice, currency)}",
+                                    style = MonoCodeSmall,
+                                    color = SafeStockGreen,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                             Text(
-                                text = "Landed Cost: ${Formatters.formatPkr(liveSuggestion.landedCost, currency)}",
+                                text = "Settings Steps: ${business.tierLabel(PricingTier.DISTRIBUTOR)} +${Formatters.formatDecimal(pricingRules.distributorStep)}% • ${business.tierLabel(PricingTier.WHOLESALER)} +${Formatters.formatDecimal(pricingRules.wholesalerStep)}% • ${business.tierLabel(PricingTier.RETAIL)} +${Formatters.formatDecimal(pricingRules.retailStep)}% • ${business.tierLabel(PricingTier.MRP)} +${Formatters.formatDecimal(pricingRules.mrpStep)}%",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = SafeStockGreen,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = "Floor: ${Formatters.formatPkr(liveSuggestion.baseFloorPrice, currency)}",
-                                style = MonoCodeSmall,
-                                color = SafeStockGreen,
-                                fontWeight = FontWeight.Bold
+                                color = SafeStockGreen.copy(alpha = 0.85f),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
+                } else {
+                    Text(
+                        text = "Enter Purchase Cost to auto-fill all 4 tiers using your Settings margin (${Formatters.formatDecimal(pricingRules.ownerMarginValue)}${if (pricingRules.ownerMarginMode == "FLAT") " $currency" else "%"}).",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
 
         Text(
-            text = "Selling Prices ($currency) — Auto-suggested & Editable",
+            text = "Selling Prices ($currency) — Auto-populated & Editable",
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.primary
         )
@@ -878,9 +922,15 @@ private fun ProductEditorDialog(
                 value = mrpPrice,
                 onValueChange = {
                     mrpPrice = it
-                    manualMrp = true
+                    manualMrp = it.isNotBlank()
                 },
                 label = { Text(business.tierLabel(PricingTier.MRP), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                supportingText = {
+                    Text(
+                        if (manualMrp) "Custom" else "Auto (+${Formatters.formatDecimal(pricingRules.mrpStep)}%)",
+                        maxLines = 1
+                    )
+                },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 modifier = Modifier
@@ -891,9 +941,15 @@ private fun ProductEditorDialog(
                 value = distPrice,
                 onValueChange = {
                     distPrice = it
-                    manualDist = true
+                    manualDist = it.isNotBlank()
                 },
                 label = { Text(business.tierLabel(PricingTier.DISTRIBUTOR), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                supportingText = {
+                    Text(
+                        if (manualDist) "Custom" else "Auto (+${Formatters.formatDecimal(pricingRules.distributorStep)}%)",
+                        maxLines = 1
+                    )
+                },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 modifier = Modifier
@@ -907,9 +963,15 @@ private fun ProductEditorDialog(
                 value = whlsPrice,
                 onValueChange = {
                     whlsPrice = it
-                    manualWhls = true
+                    manualWhls = it.isNotBlank()
                 },
                 label = { Text(business.tierLabel(PricingTier.WHOLESALER), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                supportingText = {
+                    Text(
+                        if (manualWhls) "Custom" else "Auto (+${Formatters.formatDecimal(pricingRules.wholesalerStep)}%)",
+                        maxLines = 1
+                    )
+                },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 modifier = Modifier
@@ -920,9 +982,15 @@ private fun ProductEditorDialog(
                 value = retailPrice,
                 onValueChange = {
                     retailPrice = it
-                    manualRetail = true
+                    manualRetail = it.isNotBlank()
                 },
                 label = { Text(business.tierLabel(PricingTier.RETAIL), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                supportingText = {
+                    Text(
+                        if (manualRetail) "Custom" else "Auto (+${Formatters.formatDecimal(pricingRules.retailStep)}%)",
+                        maxLines = 1
+                    )
+                },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 modifier = Modifier

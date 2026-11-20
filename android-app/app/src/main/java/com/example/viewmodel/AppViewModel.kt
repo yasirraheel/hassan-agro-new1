@@ -468,14 +468,40 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // --- Inventory Management ---
     fun saveProduct(product: ProductEntity) {
         viewModelScope.launch {
-            val bizId = activeBusiness.value.id
+            val business = activeBusiness.value
             val actor = authSession.value
+            val enriched = if (product.purchasePrice > 0.0 && (
+                    product.distributorPrice <= 0.0 ||
+                    product.wholesalerPrice <= 0.0 ||
+                    product.retailPrice <= 0.0 ||
+                    product.mrpPrice <= 0.0
+                )
+            ) {
+                val rules = business.pricingRules()
+                val suggested = com.example.data.local.calculateSuggestedTierPrices(
+                    purchasePrice = product.purchasePrice,
+                    taxRatePercent = 0.0,
+                    taxIncludedInCost = true,
+                    marginMode = rules.ownerMarginMode,
+                    marginValue = rules.ownerMarginValue,
+                    rules = rules
+                )
+                product.copy(
+                    businessId = business.id,
+                    distributorPrice = if (product.distributorPrice > 0.0) product.distributorPrice else suggested.distributorPrice,
+                    wholesalerPrice = if (product.wholesalerPrice > 0.0) product.wholesalerPrice else suggested.wholesalerPrice,
+                    retailPrice = if (product.retailPrice > 0.0) product.retailPrice else suggested.retailPrice,
+                    mrpPrice = if (product.mrpPrice > 0.0) product.mrpPrice else suggested.mrpPrice
+                )
+            } else {
+                product.copy(businessId = business.id)
+            }
             repository.saveProduct(
-                product = product.copy(businessId = bizId),
+                product = enriched,
                 performedById = actor.userId,
                 performedByName = actor.userName
             )
-            emitMessage("Saved ${product.name}")
+            emitMessage("Saved ${enriched.name}")
             triggerAutoSyncIfEnabled()
         }
     }

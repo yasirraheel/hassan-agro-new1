@@ -151,25 +151,29 @@
                     <label>Low Stock Alert Qty *</label>
                     <input class="input" type="number" min="0" name="low_stock_threshold" id="prod_low" required value="10">
                 </div>
-                <div class="field">
+                <div class="field form-full">
                     <label>Purchase Cost</label>
-                    <input class="input" type="number" step="0.01" min="0" name="purchase_price" id="prod_cost" value="0">
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <input class="input" type="number" step="0.01" min="0" name="purchase_price" id="prod_cost" value="0" oninput="autoCalcTierPrices(false)">
+                        <button type="button" class="btn btn-sm" onclick="autoCalcTierPrices(true)" style="white-space:nowrap;">Recalculate 4 Tiers</button>
+                    </div>
+                    <div id="prod_margin_hint" style="font-size:12px; color:var(--primary); margin-top:4px;"></div>
                 </div>
                 <div class="field">
                     <label>MRP Price</label>
-                    <input class="input" type="number" step="0.01" min="0" name="mrp_price" id="prod_mrp" value="0">
+                    <input class="input" type="number" step="0.01" min="0" name="mrp_price" id="prod_mrp" value="0" oninput="markTierManual('mrp')">
                 </div>
                 <div class="field">
                     <label>Distributor Price</label>
-                    <input class="input" type="number" step="0.01" min="0" name="distributor_price" id="prod_dist" value="0">
+                    <input class="input" type="number" step="0.01" min="0" name="distributor_price" id="prod_dist" value="0" oninput="markTierManual('dist')">
                 </div>
                 <div class="field">
                     <label>Wholesaler Price</label>
-                    <input class="input" type="number" step="0.01" min="0" name="wholesaler_price" id="prod_whole" value="0">
+                    <input class="input" type="number" step="0.01" min="0" name="wholesaler_price" id="prod_whole" value="0" oninput="markTierManual('whole')">
                 </div>
-                <div class="field form-full">
+                <div class="field">
                     <label>Retail Price *</label>
-                    <input class="input" type="number" step="0.01" min="0" name="retail_price" id="prod_retail" required value="0">
+                    <input class="input" type="number" step="0.01" min="0" name="retail_price" id="prod_retail" required value="0" oninput="markTierManual('retail')">
                 </div>
             </div>
             <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
@@ -182,9 +186,79 @@
 @endsection
 
 @push('scripts')
+@php
+    $bizPricingRulesMap = [];
+    foreach ($businesses as $b) {
+        $decodedRules = !empty($b->pricing_rules_json) ? json_decode((string) $b->pricing_rules_json, true) : null;
+        $bizPricingRulesMap[$b->id] = is_array($decodedRules) ? $decodedRules : [
+            'ownerMarginMode' => 'PERCENT',
+            'ownerMarginValue' => 5,
+            'distributorStep' => 0,
+            'wholesalerStep' => 5,
+            'retailStep' => 12,
+            'mrpStep' => 20,
+        ];
+    }
+@endphp
 <script>
 const prodStoreUrl = "{{ route('admin.products.store') }}";
 const prodBaseUrl = "{{ url('/admin/products') }}";
+const bizPricingRules = @json($bizPricingRulesMap);
+let manualTiers = { mrp: false, dist: false, whole: false, retail: false };
+
+function markTierManual(key) {
+    manualTiers[key] = true;
+}
+
+function getSelectedPricingRules() {
+    const bizId = document.getElementById('prod_biz').value;
+    const raw = bizPricingRules[bizId] || {};
+    return {
+        mode: String(raw.ownerMarginMode || 'PERCENT').toUpperCase(),
+        margin: Math.max(0, parseFloat(raw.ownerMarginValue ?? 5) || 0),
+        dist: Math.max(0, parseFloat(raw.distributorStep ?? 0) || 0),
+        whole: Math.max(0, parseFloat(raw.wholesalerStep ?? 5) || 0),
+        retail: Math.max(0, parseFloat(raw.retailStep ?? 12) || 0),
+        mrp: Math.max(0, parseFloat(raw.mrpStep ?? 20) || 0),
+    };
+}
+
+function updateMarginHint() {
+    const r = getSelectedPricingRules();
+    const hint = document.getElementById('prod_margin_hint');
+    if (hint) {
+        const baseTxt = r.mode === 'FLAT' ? `+${r.margin} flat` : `+${r.margin}%`;
+        hint.textContent = `Auto-pricing from Business Settings (${baseTxt} margin • Dist +${r.dist}% • Whls +${r.whole}% • Retail +${r.retail}% • MRP +${r.mrp}%)`;
+    }
+}
+
+function autoCalcTierPrices(forceAll = false) {
+    updateMarginHint();
+    const cost = parseFloat(document.getElementById('prod_cost').value) || 0;
+    if (cost <= 0) return;
+    const r = getSelectedPricingRules();
+    const baseFloor = r.mode === 'FLAT' ? (cost + r.margin) : (cost * (1 + r.margin / 100));
+    const round2 = (v) => Math.round(v * 100) / 100;
+
+    if (forceAll || !manualTiers.dist) {
+        document.getElementById('prod_dist').value = round2(baseFloor * (1 + r.dist / 100));
+        if (forceAll) manualTiers.dist = false;
+    }
+    if (forceAll || !manualTiers.whole) {
+        document.getElementById('prod_whole').value = round2(baseFloor * (1 + r.whole / 100));
+        if (forceAll) manualTiers.whole = false;
+    }
+    if (forceAll || !manualTiers.retail) {
+        document.getElementById('prod_retail').value = round2(baseFloor * (1 + r.retail / 100));
+        if (forceAll) manualTiers.retail = false;
+    }
+    if (forceAll || !manualTiers.mrp) {
+        document.getElementById('prod_mrp').value = round2(baseFloor * (1 + r.mrp / 100));
+        if (forceAll) manualTiers.mrp = false;
+    }
+}
+
+document.getElementById('prod_biz')?.addEventListener('change', () => autoCalcTierPrices(false));
 
 function openProductModal(p = null) {
     const form = document.getElementById('prodForm');
@@ -208,6 +282,7 @@ function openProductModal(p = null) {
         document.getElementById('prod_dist').value = p.distributor_price ?? 0;
         document.getElementById('prod_whole').value = p.wholesaler_price ?? 0;
         document.getElementById('prod_retail').value = p.retail_price ?? 0;
+        manualTiers = { mrp: true, dist: true, whole: true, retail: true };
     } else {
         document.getElementById('prodModalTitle').textContent = 'Add Product';
         form.action = prodStoreUrl;
@@ -216,7 +291,9 @@ function openProductModal(p = null) {
         document.getElementById('prod_cat').value = 'General';
         document.getElementById('prod_exp').value = "{{ now()->addYear()->format('Y-m-d') }}";
         document.getElementById('prod_low').value = '10';
+        manualTiers = { mrp: false, dist: false, whole: false, retail: false };
     }
+    updateMarginHint();
     openModal('productModal');
 }
 </script>
