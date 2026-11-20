@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Run on the Hassan Agro Hostinger account. The Git checkout stays outside
-# public_html, and sparse checkout downloads only backend-laravel.
+# public_html, and sparse checkout downloads only backend/.
 REPOSITORY="https://github.com/yasirraheel/hassan-agro-new1.git"
 BRANCH="main"
 BASE="$HOME/.local/share/hassan-agro-ledger"
@@ -15,7 +15,7 @@ chmod 700 "$BASE" "$BACKUPS"
 if [[ ! -d "$SOURCE/.git" ]]; then
     git clone --filter=blob:none --sparse --branch "$BRANCH" "$REPOSITORY" "$SOURCE"
 fi
-git -C "$SOURCE" sparse-checkout set --no-cone /backend-laravel/
+git -C "$SOURCE" sparse-checkout set --no-cone /backend/
 git -C "$SOURCE" pull --ff-only origin "$BRANCH"
 
 if [[ ! -f "$TARGET/.env" ]]; then
@@ -40,7 +40,7 @@ rsync -a --delete \
     --exclude='/storage/' \
     --exclude='/bootstrap/cache/' \
     --exclude='/scripts/' \
-    "$SOURCE/backend-laravel/" "$TARGET/"
+    "$SOURCE/backend/" "$TARGET/"
 
 mkdir -p "$TARGET/bootstrap/cache" \
     "$TARGET/storage/framework/cache" \

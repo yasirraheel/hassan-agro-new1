@@ -18,11 +18,11 @@ In Hostinger **hPanel → Databases → Management**, create a MySQL database an
 - `DB_PASSWORD`
 
 ### 2. Deploy only the backend to ledger.hassanagro.com
-On the Hassan Agro Hostinger account, run `bash backend-laravel/scripts/deploy-hostinger.sh`
+On the Hassan Agro Hostinger account, run `bash backend/scripts/deploy-hostinger.sh`
 from a checkout of this repository. For later deployments, run the script from
-`~/.local/share/hassan-agro-ledger/source/backend-laravel/scripts/deploy-hostinger.sh`.
+`~/.local/share/hassan-agro-ledger/source/backend/scripts/deploy-hostinger.sh`.
 It performs a sparse Git pull outside `public_html`, then copies only the
-contents of `backend-laravel` into `domains/hassanagro.com/public_html/ledger`.
+contents of `backend` into `domains/hassanagro.com/public_html/ledger`.
 The existing `.env`, `vendor`, storage, and cache directories are preserved.
 Each run backs up the previous files outside the web folder.
 
