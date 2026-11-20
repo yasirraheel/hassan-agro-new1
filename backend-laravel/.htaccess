@@ -1,0 +1,14 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Forward Authorization header to PHP on Hostinger Apache/LiteSpeed
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+    # Block direct access to sensitive files if deployed inside public_html
+    RewriteRule ^(\.env|composer\.(json|lock)|artisan|README\.md) - [F,L,NC]
+
+    # Route all requests into public/
+    RewriteCond %{REQUEST_URI} !^/public/
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>

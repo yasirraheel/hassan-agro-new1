@@ -1,0 +1,6 @@
+{
+  "name": "Hassan Agro",
+  "description": "Multi-business pesticide inventory, expiry tracking, 4-tier pricing, tax-aware PDF invoicing, expense ledger, monthly reports, and custom server sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

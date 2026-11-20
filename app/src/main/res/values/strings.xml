@@ -1,0 +1,26 @@
+<resources>
+    <string name="app_name">Hassan Agro</string>
+    <string name="default_business_name">Hassan Agro</string>
+    <string name="default_business_tagline">Crop Protection &amp; Agri Inputs</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_stock">Stock</string>
+    <string name="nav_billing">POS</string>
+    <string name="nav_expenses">Expenses</string>
+    <string name="nav_reports">Reports</string>
+    <string name="nav_settings">Settings</string>
+    <string name="cd_brand_logo">Business brand logo</string>
+    <string name="cd_switch_business">Switch active business</string>
+    <string name="cd_open_settings">Open business and server settings</string>
+    <string name="cd_scan_barcode">Scan product barcode</string>
+    <string name="cd_sync_now">Synchronize data with server</string>
+    <string name="cd_back">Navigate back</string>
+    <string name="cd_add_item">Add new entry</string>
+    <string name="cd_delete_item">Delete entry</string>
+    <string name="cd_edit_item">Edit entry</string>
+    <string name="cd_share_whatsapp">Share invoice on WhatsApp</string>
+    <string name="cd_share_email">Send invoice via Email</string>
+    <string name="cd_share_pdf">Share PDF document</string>
+    <string name="cd_previous_month">Previous month</string>
+    <string name="cd_next_month">Next month</string>
+    <string name="camera_permission_rationale">Camera access is required to scan pesticide product barcodes and QR codes. You can also enter barcodes manually below.</string>
+</resources>
