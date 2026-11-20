@@ -15,7 +15,7 @@ chmod 700 "$BASE" "$BACKUPS"
 if [[ ! -d "$SOURCE/.git" ]]; then
     git clone --filter=blob:none --sparse --branch "$BRANCH" "$REPOSITORY" "$SOURCE"
 fi
-git -C "$SOURCE" sparse-checkout set backend-laravel
+git -C "$SOURCE" sparse-checkout set --no-cone /backend-laravel/
 git -C "$SOURCE" pull --ff-only origin "$BRANCH"
 
 if [[ ! -f "$TARGET/.env" ]]; then
