@@ -49,7 +49,9 @@ mkdir -p "$TARGET/bootstrap/cache" \
     "$TARGET/storage/logs"
 
 cd "$TARGET"
-composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
+# Hostinger disables proc_open, which Composer needs for script subprocesses.
+composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader --no-scripts
+php artisan package:discover --ansi
 if ! grep -Eq '^APP_KEY=.+$' .env; then
     php artisan key:generate --force
 fi
