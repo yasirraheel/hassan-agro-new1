@@ -24,14 +24,12 @@
     <div class="card">
         <div class="kpi-label">Expenses</div>
         <div class="kpi-val" style="color:var(--danger);">Rs. {{ number_format($expensesTotal, 0) }}</div>
-        <div class="kpi-sub">{{ $expenses->count() }} expense entries</div>
+        <div class="kpi-sub">{{ $expenses->count() }} entries</div>
     </div>
     <div class="card">
         <div class="kpi-label">Net Profit / Loss</div>
-        <div class="kpi-val" style="color:{{ $netProfit >= 0 ? 'var(--primary)' : 'var(--danger)' }};">
-            Rs. {{ number_format($netProfit, 0) }}
-        </div>
-        <div class="kpi-sub">Discounts given: Rs. {{ number_format($discountTotal, 0) }}</div>
+        <div class="kpi-val" style="color:{{ $netProfit >= 0 ? '#1b5e20' : 'var(--danger)' }};">Rs. {{ number_format($netProfit, 0) }}</div>
+        <div class="kpi-sub">Discounts: Rs. {{ number_format($discountTotal, 0) }}</div>
     </div>
     <div class="card">
         <div class="kpi-label">Cash vs. Credit</div>
@@ -60,12 +58,12 @@
     </div>
 
     <div class="card">
-        <h2 class="card-title" style="margin-bottom:14px;">Sales by Pricing Tier &amp; Payment Mode</h2>
+        <h2 class="card-title" style="margin-bottom:14px;">Sales by Admin / Staff &amp; Tier</h2>
         <div style="margin-bottom:16px;">
-            <div style="font-size:12px; font-weight:700; color:var(--muted); text-transform:uppercase; margin-bottom:8px;">By Pricing Tier</div>
-            @forelse($salesByTier as $tier => $amt)
-                <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #edf2ee; font-size:13.5px;">
-                    <span>{{ $tier }}</span>
+            <div style="font-size:12px; font-weight:700; color:var(--muted); text-transform:uppercase; margin-bottom:8px;">By Admin / Cashier</div>
+            @forelse($salesByAdmin as $adminName => $amt)
+                <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #eef2f6; font-size:13.5px;">
+                    <span>{{ $adminName }}</span>
                     <strong class="num">Rs. {{ number_format($amt, 0) }}</strong>
                 </div>
             @empty
@@ -73,10 +71,10 @@
             @endforelse
         </div>
         <div>
-            <div style="font-size:12px; font-weight:700; color:var(--muted); text-transform:uppercase; margin-bottom:8px;">By Payment Method</div>
-            @forelse($salesByPayment as $pm => $amt)
-                <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #edf2ee; font-size:13.5px;">
-                    <span>{{ $pm }}</span>
+            <div style="font-size:12px; font-weight:700; color:var(--muted); text-transform:uppercase; margin-bottom:8px;">By Pricing Tier</div>
+            @forelse($salesByTier as $tier => $amt)
+                <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #eef2f6; font-size:13.5px;">
+                    <span>{{ $tier }}</span>
                     <strong class="num">Rs. {{ number_format($amt, 0) }}</strong>
                 </div>
             @empty

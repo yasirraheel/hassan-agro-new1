@@ -54,8 +54,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.data.local.BusinessEntity
 import com.example.data.local.ExpiryStatus
-import com.example.data.local.PesticideCategory
+import com.example.data.local.PricingTier
 import com.example.data.local.ProductEntity
 import com.example.ui.components.AgriFilterChip
 import com.example.ui.components.AppDatePickerDialog
@@ -63,6 +64,7 @@ import com.example.ui.components.CompactSearchBar
 import com.example.ui.components.EmptyStateCard
 import com.example.ui.components.ExpiryBadge
 import com.example.ui.components.FormScreenDialog
+import com.example.ui.components.PerformedByPill
 import com.example.ui.theme.ExpiredCrimson
 import com.example.ui.theme.MonoCodeSmall
 import com.example.ui.theme.MonoFigureMedium
@@ -72,8 +74,7 @@ import java.util.concurrent.TimeUnit
 
 @Composable
 fun InventoryScreen(
-    businessId: String,
-    businessName: String,
+    activeBusiness: BusinessEntity,
     products: List<ProductEntity>,
     activeFilter: InventoryFilter,
     onFilterChange: (InventoryFilter) -> Unit,
@@ -87,11 +88,20 @@ fun InventoryScreen(
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf<String?>(null) }
     var editingProduct by remember { mutableStateOf<ProductEntity?>(null) }
     var showAddProductSheet by remember { mutableStateOf(false) }
     var quickRestockTarget by remember { mutableStateOf<ProductEntity?>(null) }
 
-    val filteredProducts = remember(products, searchQuery, activeFilter) {
+    val customCategories = remember(activeBusiness.productCategoriesJson, activeBusiness.businessType) {
+        activeBusiness.productCategories()
+    }
+    val visibleFilters = remember(activeBusiness.trackExpiry) {
+        if (activeBusiness.trackExpiry) InventoryFilter.entries
+        else listOf(InventoryFilter.ALL, InventoryFilter.LOW_STOCK)
+    }
+
+    val filteredProducts = remember(products, searchQuery, activeFilter, selectedCategory) {
         products.filter { p ->
             val matchesQuery = searchQuery.isBlank() ||
                 p.name.contains(searchQuery, ignoreCase = true) ||
@@ -106,7 +116,8 @@ fun InventoryScreen(
                 InventoryFilter.EXPIRED -> status == ExpiryStatus.EXPIRED
                 InventoryFilter.LOW_STOCK -> p.stockQty <= p.lowStockThreshold
             }
-            matchesQuery && matchesFilter
+            val matchesCategory = selectedCategory == null || p.category.equals(selectedCategory, ignoreCase = true)
+            matchesQuery && matchesFilter && matchesCategory
         }
     }
 
@@ -127,7 +138,7 @@ fun InventoryScreen(
                 CompactSearchBar(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = "Search product, batch, SKU...",
+                    placeholder = "Search product, SKU, category...",
                     testTagName = "inventory_search_input",
                     modifier = Modifier.weight(1f)
                 )
@@ -149,7 +160,7 @@ fun InventoryScreen(
                 }
             }
 
-            // Clean Agri-Green Single-Line Filter Chips
+            // Status Filter Chips (Expiry chips shown only when enabled for this business)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -157,12 +168,34 @@ fun InventoryScreen(
                     .padding(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                InventoryFilter.entries.forEach { filter ->
+                visibleFilters.forEach { filter ->
                     AgriFilterChip(
                         selected = activeFilter == filter,
                         onClick = { onFilterChange(filter) },
                         label = filter.label,
                         modifier = Modifier.testTag("inventory_filter_${filter.name.lowercase()}")
+                    )
+                }
+            }
+
+            // Custom Per-Business Category Filter Strip
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                AgriFilterChip(
+                    selected = selectedCategory == null,
+                    onClick = { selectedCategory = null },
+                    label = "All Categories"
+                )
+                customCategories.forEach { cat ->
+                    AgriFilterChip(
+                        selected = selectedCategory == cat,
+                        onClick = { selectedCategory = if (selectedCategory == cat) null else cat },
+                        label = cat
                     )
                 }
             }
@@ -173,12 +206,12 @@ fun InventoryScreen(
                 Box(modifier = Modifier.padding(16.dp)) {
                     EmptyStateCard(
                         icon = Icons.Default.Inventory2,
-                        title = if (products.isEmpty()) "No pesticide stock yet" else "No matching products",
+                        title = if (products.isEmpty()) "No inventory stock yet" else "No matching products",
                         subtitle = if (products.isEmpty())
-                            "Scan any pesticide carton or tap Add Product to track batch numbers, expiry dates, and 4 pricing tiers for $businessName."
+                            "Scan any product barcode or tap Add Product to manage inventory, stock alerts, and multi-tier pricing for ${activeBusiness.name}."
                         else
-                            "Try clearing your search or switching expiry/stock filter chips.",
-                        actionLabel = if (products.isEmpty()) "Add Pesticide Product" else null,
+                            "Try clearing your search or switching category/stock filter chips.",
+                        actionLabel = if (products.isEmpty()) "Add Product" else null,
                         onAction = if (products.isEmpty()) { { showAddProductSheet = true } } else null,
                         actionTestTag = "inventory_empty_add_button"
                     )
@@ -190,6 +223,7 @@ fun InventoryScreen(
                 ) {
                     items(filteredProducts, key = { it.id }) { product ->
                         ProductStockCard(
+                            business = activeBusiness,
                             product = product,
                             onEdit = { editingProduct = product },
                             onRestock = { quickRestockTarget = product },
@@ -215,7 +249,7 @@ fun InventoryScreen(
 
     if (showAddProductSheet || editingProduct != null || pendingNewProductBarcode != null) {
         ProductEditorDialog(
-            businessId = businessId,
+            business = activeBusiness,
             existing = editingProduct,
             prefilledBarcode = pendingNewProductBarcode,
             onSave = { saved ->
@@ -235,6 +269,7 @@ fun InventoryScreen(
     val restockItem = quickRestockTarget ?: pendingRestockProduct
     if (restockItem != null) {
         QuickRestockDialog(
+            business = activeBusiness,
             product = restockItem,
             onConfirm = { qty, batch, expiry ->
                 onRestockProduct(restockItem.id, qty, batch, expiry)
@@ -251,12 +286,15 @@ fun InventoryScreen(
 
 @Composable
 private fun ProductStockCard(
+    business: BusinessEntity,
     product: ProductEntity,
     onEdit: () -> Unit,
     onRestock: () -> Unit,
     onDelete: () -> Unit
 ) {
     val isLowStock = product.stockQty <= product.lowStockThreshold
+    val currency = business.resolvedCurrency()
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -292,8 +330,10 @@ private fun ProductStockCard(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                Spacer(Modifier.width(8.dp))
-                ExpiryBadge(expiryMillis = product.expiryDateMillis)
+                if (business.trackExpiry) {
+                    Spacer(Modifier.width(8.dp))
+                    ExpiryBadge(expiryMillis = product.expiryDateMillis)
+                }
             }
 
             Spacer(Modifier.height(8.dp))
@@ -303,10 +343,10 @@ private fun ProductStockCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    if (product.batchNumber.isNotBlank()) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    if (business.trackBatch && product.batchNumber.isNotBlank()) {
                         Text(
-                            text = "Batch: ${product.batchNumber}",
+                            text = "${business.batchFieldLabel}: ${product.batchNumber}",
                             style = MonoCodeSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -321,6 +361,9 @@ private fun ProductStockCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                    }
+                    if (product.performedByName.isNotBlank()) {
+                        PerformedByPill(name = product.performedByName)
                     }
                 }
                 Surface(
@@ -343,15 +386,15 @@ private fun ProductStockCard(
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Spacer(Modifier.height(8.dp))
 
-            // 4-Tier Pricing Strip
+            // 4-Tier Pricing Strip using this business's custom tier labels
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                TierPricePill("MRP", product.mrpPrice, Modifier.weight(1f))
-                TierPricePill("Dist", product.distributorPrice, Modifier.weight(1f))
-                TierPricePill("Whls", product.wholesalerPrice, Modifier.weight(1f))
-                TierPricePill("Retail", product.retailPrice, Modifier.weight(1f))
+                TierPricePill(business.tierLabel(PricingTier.MRP), product.mrpPrice, currency, Modifier.weight(1f))
+                TierPricePill(business.tierLabel(PricingTier.DISTRIBUTOR), product.distributorPrice, currency, Modifier.weight(1f))
+                TierPricePill(business.tierLabel(PricingTier.WHOLESALER), product.wholesalerPrice, currency, Modifier.weight(1f))
+                TierPricePill(business.tierLabel(PricingTier.RETAIL), product.retailPrice, currency, Modifier.weight(1f))
             }
 
             Spacer(Modifier.height(8.dp))
@@ -392,7 +435,7 @@ private fun ProductStockCard(
 }
 
 @Composable
-private fun TierPricePill(label: String, price: Double, modifier: Modifier = Modifier) {
+private fun TierPricePill(label: String, price: Double, currency: String, modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(8.dp),
@@ -407,10 +450,11 @@ private fun TierPricePill(label: String, price: Double, modifier: Modifier = Mod
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
-                softWrap = false
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = Formatters.formatPkr(price).removePrefix("Rs. "),
+                text = Formatters.formatPkr(price, currency).removePrefix("$currency "),
                 style = MonoCodeSmall,
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.SemiBold,
@@ -424,17 +468,21 @@ private fun TierPricePill(label: String, price: Double, modifier: Modifier = Mod
 
 @Composable
 private fun ProductEditorDialog(
-    businessId: String,
+    business: BusinessEntity,
     existing: ProductEntity?,
     prefilledBarcode: String?,
     onSave: (ProductEntity) -> Unit,
     onDismiss: () -> Unit
 ) {
     val defaultExpiry = remember { System.currentTimeMillis() + TimeUnit.DAYS.toMillis(365) }
+    val categories = remember(business.productCategoriesJson, business.businessType) {
+        business.productCategories()
+    }
+    val currency = business.resolvedCurrency()
 
     var name by remember { mutableStateOf(existing?.name ?: "") }
     var brand by remember { mutableStateOf(existing?.brand ?: "") }
-    var category by remember { mutableStateOf(existing?.category ?: PesticideCategory.INSECTICIDE.label) }
+    var category by remember { mutableStateOf(existing?.category ?: categories.firstOrNull() ?: "General") }
     var packSize by remember { mutableStateOf(existing?.packSize ?: "") }
     var barcode by remember { mutableStateOf(existing?.barcode ?: prefilledBarcode ?: "") }
     var batchNumber by remember { mutableStateOf(existing?.batchNumber ?: "") }
@@ -450,8 +498,8 @@ private fun ProductEditorDialog(
     var validationError by remember { mutableStateOf<String?>(null) }
 
     FormScreenDialog(
-        title = if (existing == null) "Add Pesticide Product" else "Edit Product",
-        subtitle = "Scroll freely — closes only when you tap X or Save",
+        title = if (existing == null) "Add Product" else "Edit Product",
+        subtitle = business.name,
         onDismiss = onDismiss,
         bottomBar = {
             Button(
@@ -465,11 +513,11 @@ private fun ProductEditorDialog(
                     val whls = whlsPrice.toDoubleOrNull() ?: retail
                     val dist = distPrice.toDoubleOrNull() ?: whls
                     val entity = (existing ?: ProductEntity(
-                        businessId = businessId,
+                        businessId = business.id,
                         name = name.trim(),
                         expiryDateMillis = expiryMillis
                     )).copy(
-                        businessId = businessId,
+                        businessId = business.id,
                         name = name.trim(),
                         brand = brand.trim(),
                         category = category,
@@ -504,7 +552,7 @@ private fun ProductEditorDialog(
             value = name,
             onValueChange = { name = it; validationError = null },
             label = { Text("Product Name *", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            placeholder = { Text("e.g. Lambda Cyhalothrin 2.5% EC", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            placeholder = { Text("Enter item name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
             singleLine = true,
             modifier = Modifier
                 .fillMaxWidth()
@@ -515,30 +563,29 @@ private fun ProductEditorDialog(
             OutlinedTextField(
                 value = brand,
                 onValueChange = { brand = it },
-                label = { Text("Brand", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                label = { Text("Brand / Company", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 singleLine = true,
                 modifier = Modifier.weight(1f)
             )
             OutlinedTextField(
                 value = packSize,
                 onValueChange = { packSize = it },
-                label = { Text("Pack Size", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                placeholder = { Text("500ml / 1L", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                label = { Text(business.packSizeLabel, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 singleLine = true,
                 modifier = Modifier.weight(1f)
             )
         }
 
-        Text("Formulation Category", style = MaterialTheme.typography.labelLarge)
+        Text("Category", style = MaterialTheme.typography.labelLarge)
         Row(
             modifier = Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            PesticideCategory.entries.forEach { cat ->
+            categories.forEach { cat ->
                 AgriFilterChip(
-                    selected = category == cat.label,
-                    onClick = { category = cat.label },
-                    label = cat.label
+                    selected = category == cat,
+                    onClick = { category = cat },
+                    label = cat
                 )
             }
         }
@@ -551,34 +598,36 @@ private fun ProductEditorDialog(
                 singleLine = true,
                 modifier = Modifier.weight(1f)
             )
-            OutlinedTextField(
-                value = batchNumber,
-                onValueChange = { batchNumber = it },
-                label = { Text("Batch No.", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                singleLine = true,
-                modifier = Modifier.weight(1f)
-            )
+            if (business.trackBatch) {
+                OutlinedTextField(
+                    value = batchNumber,
+                    onValueChange = { batchNumber = it },
+                    label = { Text(business.batchFieldLabel, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+            }
         }
 
-        // Expiry Date Picker Row
-        OutlinedButton(
-            onClick = { showDatePicker = true },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .testTag("product_expiry_date_button")
-        ) {
-            Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = "Expiry Date: ${Formatters.formatDate(expiryMillis)}",
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Ellipsis
-            )
+        if (business.trackExpiry) {
+            OutlinedButton(
+                onClick = { showDatePicker = true },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("product_expiry_date_button")
+            ) {
+                Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "Expiry Date: ${Formatters.formatDate(expiryMillis)}",
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
 
-        // Clean 2-column stock & cost rows (never cramped)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(
                 value = stockQty,
@@ -601,14 +650,14 @@ private fun ProductEditorDialog(
         OutlinedTextField(
             value = purchasePrice,
             onValueChange = { purchasePrice = it },
-            label = { Text("Purchase / Cost Price (Rs.)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            label = { Text("Purchase / Cost Price ($currency)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
 
         Text(
-            text = "4-Tier Selling Prices (PKR Rs.)",
+            text = "Selling Prices ($currency)",
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.primary
         )
@@ -617,7 +666,7 @@ private fun ProductEditorDialog(
             OutlinedTextField(
                 value = mrpPrice,
                 onValueChange = { mrpPrice = it },
-                label = { Text("MRP Price", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                label = { Text(business.tierLabel(PricingTier.MRP), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 modifier = Modifier
@@ -627,7 +676,7 @@ private fun ProductEditorDialog(
             OutlinedTextField(
                 value = distPrice,
                 onValueChange = { distPrice = it },
-                label = { Text("Distributor", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                label = { Text(business.tierLabel(PricingTier.DISTRIBUTOR), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 modifier = Modifier
@@ -640,7 +689,7 @@ private fun ProductEditorDialog(
             OutlinedTextField(
                 value = whlsPrice,
                 onValueChange = { whlsPrice = it },
-                label = { Text("Wholesaler", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                label = { Text(business.tierLabel(PricingTier.WHOLESALER), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 modifier = Modifier
@@ -650,7 +699,7 @@ private fun ProductEditorDialog(
             OutlinedTextField(
                 value = retailPrice,
                 onValueChange = { retailPrice = it },
-                label = { Text("Retail Price", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                label = { Text(business.tierLabel(PricingTier.RETAIL), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 modifier = Modifier
@@ -680,6 +729,7 @@ private fun ProductEditorDialog(
 
 @Composable
 private fun QuickRestockDialog(
+    business: BusinessEntity,
     product: ProductEntity,
     onConfirm: (Int, String, Long) -> Unit,
     onDismiss: () -> Unit
@@ -719,27 +769,31 @@ private fun QuickRestockDialog(
                 .fillMaxWidth()
                 .testTag("restock_qty_input")
         )
-        OutlinedTextField(
-            value = batch,
-            onValueChange = { batch = it },
-            label = { Text("Batch Number", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-        OutlinedButton(
-            onClick = { showDatePicker = true },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-        ) {
-            Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = "Batch Expiry: ${Formatters.formatDate(expiryMillis)}",
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Ellipsis
+        if (business.trackBatch) {
+            OutlinedTextField(
+                value = batch,
+                onValueChange = { batch = it },
+                label = { Text(business.batchFieldLabel, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
             )
+        }
+        if (business.trackExpiry) {
+            OutlinedButton(
+                onClick = { showDatePicker = true },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+            ) {
+                Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "Expiry: ${Formatters.formatDate(expiryMillis)}",
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
 

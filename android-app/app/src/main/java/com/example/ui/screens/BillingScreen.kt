@@ -64,16 +64,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.data.local.BusinessEntity
 import com.example.data.local.ExpiryStatus
 import com.example.data.local.InvoicePaymentStatus
 import com.example.data.local.InvoiceWithItems
-import com.example.data.local.PesticideCategory
 import com.example.data.local.PricingTier
 import com.example.data.local.ProductEntity
 import com.example.ui.components.AgriFilterChip
 import com.example.ui.components.CompactSearchBar
 import com.example.ui.components.EmptyStateCard
 import com.example.ui.components.ExpiryBadge
+import com.example.ui.components.PerformedByPill
 import com.example.ui.theme.ExpiredBg
 import com.example.ui.theme.ExpiredCrimson
 import com.example.ui.theme.ExpiringSoonAmber
@@ -97,12 +98,15 @@ private enum class SalesFilter(val label: String) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BillingScreen(
-    businessName: String,
+    activeBusiness: BusinessEntity,
     products: List<ProductEntity>,
     invoices: List<InvoiceWithItems>,
     draft: BillingDraftState,
     heldCarts: List<HeldCart>,
     generatedInvoice: GeneratedInvoiceEvent?,
+    canCreateSale: Boolean,
+    canCollectCredit: Boolean,
+    canReturnSale: Boolean,
     onUpdateCustomer: (String, String, String) -> Unit,
     onSelectTier: (PricingTier) -> Unit,
     onUpdateTax: (Boolean, String) -> Unit,
@@ -125,7 +129,12 @@ fun BillingScreen(
     onDismissGeneratedInvoice: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) }
+    val currency = activeBusiness.resolvedCurrency()
+    val customCategories = remember(activeBusiness.productCategoriesJson, activeBusiness.businessType) {
+        activeBusiness.productCategories()
+    }
+
+    var selectedTab by remember(canCreateSale) { mutableIntStateOf(if (canCreateSale) 0 else 1) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf<String?>(null) }
     var salesFilter by remember { mutableStateOf(SalesFilter.ALL) }
@@ -144,7 +153,7 @@ fun BillingScreen(
                 p.name.contains(searchQuery, ignoreCase = true) ||
                 p.brand.contains(searchQuery, ignoreCase = true) ||
                 p.barcode.contains(searchQuery, ignoreCase = true)
-            val matchesCat = selectedCategory == null || p.category == selectedCategory
+            val matchesCat = selectedCategory == null || p.category.equals(selectedCategory, ignoreCase = true)
             matchesQuery && matchesCat
         }
     }
@@ -180,29 +189,29 @@ fun BillingScreen(
                 .fillMaxSize()
                 .widthIn(max = 920.dp)
         ) {
-            SingleChoiceSegmentedButtonRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp)
-            ) {
-                SegmentedButton(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    shape = SegmentedButtonDefaults.itemShape(0, 2),
-                    modifier = Modifier.testTag("billing_tab_new")
-                ) { Text("POS Counter", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
-                SegmentedButton(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    shape = SegmentedButtonDefaults.itemShape(1, 2),
-                    modifier = Modifier.testTag("billing_tab_history")
-                ) { Text("Sales (${invoices.size})", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
+            if (canCreateSale) {
+                SingleChoiceSegmentedButtonRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                ) {
+                    SegmentedButton(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        shape = SegmentedButtonDefaults.itemShape(0, 2),
+                        modifier = Modifier.testTag("billing_tab_new")
+                    ) { Text("POS Counter", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
+                    SegmentedButton(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        shape = SegmentedButtonDefaults.itemShape(1, 2),
+                        modifier = Modifier.testTag("billing_tab_history")
+                    ) { Text("Sales (${invoices.size})", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
+                }
             }
 
-            if (selectedTab == 0) {
-                // --- POS COUNTER ---
+            if (selectedTab == 0 && canCreateSale) {
                 Column(modifier = Modifier.weight(1f)) {
-                    // Compact Single-Line Search + Matched Scan Button
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -248,7 +257,7 @@ fun BillingScreen(
                             AgriFilterChip(
                                 selected = draft.pricingTier == tier,
                                 onClick = { onSelectTier(tier) },
-                                label = tier.label,
+                                label = activeBusiness.tierLabel(tier),
                                 modifier = Modifier.testTag("tier_chip_${tier.name.lowercase()}")
                             )
                         }
@@ -265,7 +274,7 @@ fun BillingScreen(
                         }
                     }
 
-                    // Category Filter Strip
+                    // Dynamic Per-Business Category Filter Strip
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -278,22 +287,21 @@ fun BillingScreen(
                             onClick = { selectedCategory = null },
                             label = "All Items"
                         )
-                        PesticideCategory.entries.forEach { cat ->
+                        customCategories.forEach { cat ->
                             AgriFilterChip(
-                                selected = selectedCategory == cat.label,
-                                onClick = { selectedCategory = if (selectedCategory == cat.label) null else cat.label },
-                                label = cat.label
+                                selected = selectedCategory == cat,
+                                onClick = { selectedCategory = if (selectedCategory == cat) null else cat },
+                                label = cat
                             )
                         }
                     }
 
-                    // Tap-to-Sell POS Product Grid
                     if (products.isEmpty()) {
                         Box(modifier = Modifier.padding(16.dp)) {
                             EmptyStateCard(
                                 icon = Icons.Default.PointOfSale,
                                 title = "Add products to start selling on POS",
-                                subtitle = "Add or scan pesticide stock for $businessName first. Products immediately appear here as 1-tap POS tiles with 4-tier pricing.",
+                                subtitle = "Add or scan stock for ${activeBusiness.name} first. Products appear here as 1-tap POS tiles with multi-tier pricing.",
                                 actionLabel = "Open Stock & Add Products",
                                 onAction = onGoToInventory,
                                 actionTestTag = "pos_empty_go_stock_btn"
@@ -304,7 +312,7 @@ fun BillingScreen(
                             EmptyStateCard(
                                 icon = Icons.Default.Search,
                                 title = "No matching items",
-                                subtitle = "Try a different product name, barcode, or formulation category."
+                                subtitle = "Try a different product name, barcode, or category."
                             )
                         }
                     } else {
@@ -318,6 +326,7 @@ fun BillingScreen(
                             items(filteredProducts, key = { it.id }) { product ->
                                 val qtyInCart = cartQtyByProductId[product.id] ?: 0
                                 PosProductTile(
+                                    business = activeBusiness,
                                     product = product,
                                     pricingTier = draft.pricingTier,
                                     qtyInCart = qtyInCart,
@@ -328,7 +337,6 @@ fun BillingScreen(
                         }
                     }
 
-                    // Sticky Live POS Cart Footer Bar
                     AnimatedVisibility(visible = draft.cartLines.isNotEmpty()) {
                         Surface(
                             modifier = Modifier
@@ -363,14 +371,14 @@ fun BillingScreen(
                                 Spacer(Modifier.width(6.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "${draft.totalItemCount} items • ${draft.pricingTier.shortLabel}",
+                                        text = "${draft.totalItemCount} items • ${activeBusiness.tierLabel(draft.pricingTier)}",
                                         style = MaterialTheme.typography.labelMedium,
                                         color = Color.White.copy(alpha = 0.85f),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        text = Formatters.formatPkr(draft.grandTotal),
+                                        text = Formatters.formatPkr(draft.grandTotal, currency),
                                         style = MonoFigureMedium,
                                         color = Color.White,
                                         fontWeight = FontWeight.Bold,
@@ -396,7 +404,6 @@ fun BillingScreen(
                     }
                 }
             } else {
-                // --- SALES & INVOICES MANAGEMENT ---
                 Column(modifier = Modifier.weight(1f)) {
                     Row(
                         modifier = Modifier
@@ -404,9 +411,9 @@ fun BillingScreen(
                             .padding(horizontal = 16.dp, vertical = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        SalesMetricChip("Today Sales", Formatters.formatCompactPkr(todaySales), SafeStockGreen, Modifier.weight(1f))
-                        SalesMetricChip("Collected", Formatters.formatCompactPkr(todayCollected), MaterialTheme.colorScheme.tertiary, Modifier.weight(1f))
-                        SalesMetricChip("Credit Due", Formatters.formatCompactPkr(pendingCreditTotal), ExpiringSoonAmber, Modifier.weight(1f))
+                        SalesMetricChip("Today Sales", Formatters.formatCompactPkr(todaySales, currency), SafeStockGreen, Modifier.weight(1f))
+                        SalesMetricChip("Collected", Formatters.formatCompactPkr(todayCollected, currency), MaterialTheme.colorScheme.tertiary, Modifier.weight(1f))
+                        SalesMetricChip("Credit Due", Formatters.formatCompactPkr(pendingCreditTotal, currency), ExpiringSoonAmber, Modifier.weight(1f))
                     }
 
                     Row(
@@ -431,8 +438,8 @@ fun BillingScreen(
                                 icon = Icons.Default.ReceiptLong,
                                 title = "No sales bills found",
                                 subtitle = "Tap items in the POS Counter tab to complete a sale, auto-deduct stock, and generate branded invoices.",
-                                actionLabel = "Open POS Counter",
-                                onAction = { selectedTab = 0 },
+                                actionLabel = if (canCreateSale) "Open POS Counter" else null,
+                                onAction = if (canCreateSale) { { selectedTab = 0 } } else null,
                                 actionTestTag = "history_empty_new_invoice_btn"
                             )
                         }
@@ -443,7 +450,10 @@ fun BillingScreen(
                         ) {
                             items(filteredInvoices, key = { it.invoice.id }) { entry ->
                                 SalesInvoiceCard(
+                                    business = activeBusiness,
                                     entry = entry,
+                                    canCollectCredit = canCollectCredit,
+                                    canReturnSale = canReturnSale,
                                     onSharePdf = { onOpenPastInvoice(entry) },
                                     onCollectPayment = { paymentTargetInvoice = entry },
                                     onReturnRestock = { returnTargetInvoice = entry }
@@ -458,6 +468,7 @@ fun BillingScreen(
 
     if (showCheckoutSheet) {
         PosCheckoutSheet(
+            business = activeBusiness,
             draft = draft,
             onUpdateCustomer = onUpdateCustomer,
             onSelectTier = onSelectTier,
@@ -475,6 +486,7 @@ fun BillingScreen(
 
     if (showHeldCartsSheet) {
         HeldCartsSheet(
+            currencySymbol = currency,
             heldCarts = heldCarts,
             onResume = onResumeHeldCart,
             onDiscard = onDiscardHeldCart,
@@ -484,6 +496,7 @@ fun BillingScreen(
 
     paymentTargetInvoice?.let { target ->
         ReceivePaymentDialog(
+            currencySymbol = currency,
             invoiceWithItems = target,
             onConfirm = { amt -> onRecordPayment(target.invoice.id, amt) },
             onDismiss = { paymentTargetInvoice = null }
@@ -492,6 +505,7 @@ fun BillingScreen(
 
     returnTargetInvoice?.let { target ->
         ReturnSaleConfirmDialog(
+            currencySymbol = currency,
             invoiceWithItems = target,
             onConfirm = { onReturnInvoice(target.invoice.id) },
             onDismiss = { returnTargetInvoice = null }
@@ -508,15 +522,17 @@ fun BillingScreen(
 
 @Composable
 private fun PosProductTile(
+    business: BusinessEntity,
     product: ProductEntity,
     pricingTier: PricingTier,
     qtyInCart: Int,
     onTapAdd: () -> Unit,
     onQtyChange: (Int) -> Unit
 ) {
-    val isExpired = Formatters.expiryStatus(product.expiryDateMillis) == ExpiryStatus.EXPIRED
+    val isExpired = business.trackExpiry && Formatters.expiryStatus(product.expiryDateMillis) == ExpiryStatus.EXPIRED
     val outOfStock = product.stockQty <= 0
     val tierPrice = product.priceForTier(pricingTier)
+    val currency = business.resolvedCurrency()
 
     Surface(
         modifier = Modifier
@@ -592,7 +608,9 @@ private fun PosProductTile(
                 overflow = TextOverflow.Ellipsis
             )
 
-            ExpiryBadge(expiryMillis = product.expiryDateMillis)
+            if (business.trackExpiry) {
+                ExpiryBadge(expiryMillis = product.expiryDateMillis)
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -600,7 +618,7 @@ private fun PosProductTile(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = Formatters.formatPkr(tierPrice),
+                    text = Formatters.formatPkr(tierPrice, currency),
                     style = MonoFigureMedium,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold,
@@ -646,12 +664,16 @@ private fun SalesMetricChip(label: String, value: String, accent: Color, modifie
 
 @Composable
 private fun SalesInvoiceCard(
+    business: BusinessEntity,
     entry: InvoiceWithItems,
+    canCollectCredit: Boolean,
+    canReturnSale: Boolean,
     onSharePdf: () -> Unit,
     onCollectPayment: () -> Unit,
     onReturnRestock: () -> Unit
 ) {
     val inv = entry.invoice
+    val currency = business.resolvedCurrency()
     val status = InvoicePaymentStatus.fromName(inv.paymentStatus)
     val (statusBg, statusFg) = when {
         inv.isReturned || status == InvoicePaymentStatus.RETURNED -> ExpiredBg to ExpiredCrimson
@@ -671,7 +693,7 @@ private fun SalesInvoiceCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Top
             ) {
-                Column(modifier = Modifier.weight(1f)) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -690,7 +712,7 @@ private fun SalesInvoiceCard(
                         }
                         Surface(shape = RoundedCornerShape(6.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
                             Text(
-                                text = PricingTier.fromName(inv.pricingTier).shortLabel,
+                                text = business.tierLabel(PricingTier.fromName(inv.pricingTier)),
                                 style = MaterialTheme.typography.labelSmall,
                                 maxLines = 1,
                                 softWrap = false,
@@ -698,7 +720,6 @@ private fun SalesInvoiceCard(
                             )
                         }
                     }
-                    Spacer(Modifier.height(4.dp))
                     Text(inv.customerName, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
                         text = "${entry.items.sumOf { it.quantity }} units • ${inv.paymentMethod} • ${Formatters.formatDateTime(inv.createdAt)}",
@@ -707,11 +728,12 @@ private fun SalesInvoiceCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    PerformedByPill(name = inv.performedByName)
                 }
                 Spacer(Modifier.width(8.dp))
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = Formatters.formatPkr(inv.grandTotal),
+                        text = Formatters.formatPkr(inv.grandTotal, currency),
                         style = MonoFigureMedium,
                         color = if (inv.isReturned) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
                         maxLines = 1,
@@ -719,7 +741,7 @@ private fun SalesInvoiceCard(
                     )
                     if (!inv.isReturned && inv.balanceDue > 0.01) {
                         Text(
-                            text = "Due: ${Formatters.formatPkr(inv.balanceDue)}",
+                            text = "Due: ${Formatters.formatPkr(inv.balanceDue, currency)}",
                             style = MaterialTheme.typography.labelSmall,
                             color = ExpiringSoonAmber,
                             fontWeight = FontWeight.SemiBold,
@@ -746,7 +768,7 @@ private fun SalesInvoiceCard(
                     Spacer(Modifier.width(4.dp))
                     Text("PDF / Share", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
                 }
-                if (!inv.isReturned && inv.balanceDue > 0.01) {
+                if (canCollectCredit && !inv.isReturned && inv.balanceDue > 0.01) {
                     Button(
                         onClick = onCollectPayment,
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
@@ -757,7 +779,7 @@ private fun SalesInvoiceCard(
                         Text("Collect", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
                     }
                 }
-                if (!inv.isReturned) {
+                if (canReturnSale && !inv.isReturned) {
                     OutlinedButton(
                         onClick = onReturnRestock,
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),

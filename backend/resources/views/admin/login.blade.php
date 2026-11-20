@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Login — Hassan Agro</title>
+    <title>Admin Login — Business Manager</title>
     <style>
         * { box-sizing: border-box; }
         body {
@@ -11,13 +11,13 @@
             min-height: 100vh;
             display: grid;
             place-items: center;
-            background: linear-gradient(135deg, #102a16 0%, #1b5e20 55%, #2e7d32 100%);
+            background: linear-gradient(135deg, #0f172a 0%, #0d47a1 55%, #1565c0 100%);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             padding: 16px;
         }
         .card {
             width: 100%;
-            max-width: 400px;
+            max-width: 410px;
             background: #fff;
             border-radius: 18px;
             padding: 28px;
@@ -27,7 +27,7 @@
             width: 52px;
             height: 52px;
             border-radius: 14px;
-            background: #1b5e20;
+            background: #0d47a1;
             color: #fff;
             display: grid;
             place-items: center;
@@ -35,8 +35,8 @@
             font-size: 20px;
             margin-bottom: 14px;
         }
-        h1 { margin: 0 0 4px; font-size: 21px; color: #142218; }
-        p { margin: 0 0 20px; font-size: 13.5px; color: #5a6d60; }
+        h1 { margin: 0 0 4px; font-size: 21px; color: #111827; }
+        p { margin: 0 0 20px; font-size: 13.5px; color: #5b6472; }
         label { display: block; font-size: 12.5px; font-weight: 600; color: #374151; margin-bottom: 5px; }
         input {
             width: 100%;
@@ -46,35 +46,29 @@
             font-size: 14px;
             margin-bottom: 14px;
         }
-        input:focus { outline: 2px solid #86efac; border-color: #1b5e20; }
+        input:focus { outline: 2px solid #bfdbfe; border-color: #0d47a1; }
         button {
             width: 100%;
             padding: 12px;
             border: none;
             border-radius: 10px;
-            background: #1b5e20;
+            background: #0d47a1;
             color: #fff;
             font-size: 14.5px;
             font-weight: 700;
             cursor: pointer;
         }
-        button:hover { background: #2e7d32; }
-        .msg {
-            padding: 10px 12px;
-            border-radius: 9px;
-            font-size: 13px;
-            font-weight: 600;
-            margin-bottom: 14px;
-        }
+        button:hover { background: #1565c0; }
+        .msg { padding: 10px 12px; border-radius: 9px; font-size: 13px; font-weight: 600; margin-bottom: 14px; }
         .err { background: #fee2e2; color: #b91c1c; }
         .ok { background: #e6f4ea; color: #1b5e20; }
     </style>
 </head>
 <body>
     <div class="card">
-        <div class="logo">HA</div>
-        <h1>Hassan Agro Admin</h1>
-        <p>Sign in to manage businesses, pesticide stock, POS sales, expenses, and mobile sync.</p>
+        <div class="logo">BM</div>
+        <h1>Business Manager Admin</h1>
+        <p>Sign in to manage businesses, themes, custom categories, roles, staff accounts, inventory, and sales.</p>
 
         @if(session('error'))
             <div class="msg err">{{ session('error') }}</div>

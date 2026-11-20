@@ -4,6 +4,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,11 +20,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.TrendingDown
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.TableChart
@@ -47,33 +54,62 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.local.BusinessEntity
 import com.example.data.local.ExpenseEntity
 import com.example.data.local.InvoiceWithItems
+import com.example.data.local.MonthlyTotalRow
 import com.example.data.local.ProductEntity
-import com.example.ui.theme.AgriLeafPrimary
+import com.example.ui.theme.ExpiredBg
 import com.example.ui.theme.ExpiredCrimson
 import com.example.ui.theme.HarvestAmberSecondary
 import com.example.ui.theme.MonoCodeSmall
 import com.example.ui.theme.MonoFigureMedium
+import com.example.ui.theme.SafeStockBg
 import com.example.ui.theme.SafeStockGreen
 import com.example.util.Formatters
 import com.example.util.ShareHelper
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Calendar
+import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
+
+private data class MonthlyChartBucket(
+    val yearMonth: String,
+    val shortLabel: String,
+    val income: Double,
+    val expense: Double
+) {
+    val netProfit: Double get() = income - expense
+}
+
+private data class AdminActivitySummary(
+    val adminName: String,
+    val invoiceCount: Int,
+    val salesTotal: Double,
+    val expenseCount: Int,
+    val expenseTotal: Double
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -86,6 +122,11 @@ fun ReportsScreen(
     allProducts: List<ProductEntity>,
     allInvoices: List<InvoiceWithItems>,
     allExpenses: List<ExpenseEntity>,
+    activeMonthlySalesRows: List<MonthlyTotalRow>,
+    activeMonthlyExpenseRows: List<MonthlyTotalRow>,
+    allMonthlySalesRows: List<MonthlyTotalRow>,
+    allMonthlyExpenseRows: List<MonthlyTotalRow>,
+    canExportData: Boolean,
     onGenerateReportPdf: suspend (Int, Int, Boolean) -> File,
     onExportCsv: suspend (String, Int, Int, Boolean) -> Pair<File, String>,
     onNotify: (String) -> Unit,
@@ -97,6 +138,11 @@ fun ReportsScreen(
     var selectedYear by remember { mutableIntStateOf(initCal.get(Calendar.YEAR)) }
     var selectedMonth by remember { mutableIntStateOf(initCal.get(Calendar.MONTH)) }
     var allBusinessesScope by remember { mutableStateOf(false) }
+    var focusedMonthIndex by remember(selectedYear, selectedMonth) { mutableIntStateOf(5) }
+
+    val currency = activeBusiness.resolvedCurrency()
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val outlineColor = MaterialTheme.colorScheme.outlineVariant
 
     // Pending CSV content for Storage Access Framework Save
     var pendingSaveCsvContent by remember { mutableStateOf<String?>(null) }
@@ -131,13 +177,53 @@ fun ReportsScreen(
             .filter { it.expenseDateMillis in startMs until endMs }
     }
 
+    // 6-Month SQL-backed Monthly Income vs. Expense totals directly from Room DAO aggregates
+    val monthlyBuckets = remember(
+        selectedYear,
+        selectedMonth,
+        allBusinessesScope,
+        activeMonthlySalesRows,
+        activeMonthlyExpenseRows,
+        allMonthlySalesRows,
+        allMonthlyExpenseRows
+    ) {
+        val salesMap = (if (allBusinessesScope) allMonthlySalesRows else activeMonthlySalesRows)
+            .associate { it.yearMonth to it.total }
+        val expenseMap = (if (allBusinessesScope) allMonthlyExpenseRows else activeMonthlyExpenseRows)
+            .associate { it.yearMonth to it.total }
+
+        Formatters.lastSixYearMonths(selectedYear, selectedMonth).map { ym ->
+            MonthlyChartBucket(
+                yearMonth = ym,
+                shortLabel = Formatters.formatShortMonth(ym),
+                income = salesMap[ym] ?: 0.0,
+                expense = expenseMap[ym] ?: 0.0
+            )
+        }
+    }
+
+    val sixMonthIncomeTotal = remember(monthlyBuckets) { monthlyBuckets.sumOf { it.income } }
+    val sixMonthExpenseTotal = remember(monthlyBuckets) { monthlyBuckets.sumOf { it.expense } }
+    val sixMonthNetTotal = sixMonthIncomeTotal - sixMonthExpenseTotal
+
+    // Month-over-Month Growth calculation (selected month vs previous month)
+    val momGrowthPercent = remember(monthlyBuckets) {
+        val prev = monthlyBuckets.getOrNull(4)?.income ?: 0.0
+        val curr = monthlyBuckets.getOrNull(5)?.income ?: 0.0
+        when {
+            prev > 0.0 -> ((curr - prev) / prev) * 100.0
+            curr > 0.0 -> 100.0
+            else -> 0.0
+        }
+    }
+
     val grossSales = remember(scopedInvoices) { scopedInvoices.sumOf { it.invoice.grandTotal } }
     val totalExpenses = remember(scopedExpenses) { scopedExpenses.sumOf { it.amount } }
     val netProfit = grossSales - totalExpenses
     val taxCollected = remember(scopedInvoices) { scopedInvoices.sumOf { it.invoice.taxAmount } }
     val stockValuation = remember(scopedProducts) { scopedProducts.sumOf { it.stockQty * it.purchasePrice } }
 
-    // Weekly buckets (W1..W4/W5)
+    // Weekly buckets (W1..W4)
     val weeklyBuckets = remember(scopedInvoices, scopedExpenses) {
         val salesByWeek = DoubleArray(4)
         val expByWeek = DoubleArray(4)
@@ -161,6 +247,29 @@ fun ReportsScreen(
             .entries.sortedByDescending { it.value }
     }
 
+    // Per-Admin Audit Activity for the selected month
+    val adminSummaries = remember(scopedInvoices, scopedExpenses) {
+        val names = (
+            scopedInvoices.map { it.invoice.performedByName.trim().ifBlank { "System" } } +
+                scopedExpenses.map { it.performedByName.trim().ifBlank { "System" } }
+            ).distinct()
+        names.map { adminName ->
+            val adminInvs = scopedInvoices.filter {
+                it.invoice.performedByName.trim().ifBlank { "System" } == adminName
+            }
+            val adminExps = scopedExpenses.filter {
+                it.performedByName.trim().ifBlank { "System" } == adminName
+            }
+            AdminActivitySummary(
+                adminName = adminName,
+                invoiceCount = adminInvs.size,
+                salesTotal = adminInvs.sumOf { it.invoice.grandTotal },
+                expenseCount = adminExps.size,
+                expenseTotal = adminExps.sumOf { it.amount }
+            )
+        }.sortedByDescending { it.salesTotal + it.expenseTotal }
+    }
+
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         LazyColumn(
             modifier = Modifier
@@ -174,7 +283,7 @@ fun ReportsScreen(
                 Surface(
                     shape = MaterialTheme.shapes.large,
                     color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    border = BorderStroke(1.dp, outlineColor)
                 ) {
                     Column(
                         modifier = Modifier.padding(14.dp),
@@ -196,12 +305,26 @@ fun ReportsScreen(
                                 },
                                 modifier = Modifier.testTag("reports_prev_month")
                             ) {
-                                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = stringResource(R.string.cd_previous_month))
+                                Icon(
+                                    Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                    contentDescription = stringResource(R.string.cd_previous_month)
+                                )
                             }
-                            Text(
-                                text = Formatters.formatMonthYear(selectedYear, selectedMonth),
-                                style = MaterialTheme.typography.titleLarge
-                            )
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = Formatters.formatMonthYear(selectedYear, selectedMonth),
+                                    style = MaterialTheme.typography.titleLarge,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = if (allBusinessesScope) "All Assigned Businesses" else activeBusiness.name,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                             IconButton(
                                 onClick = {
                                     if (selectedMonth == 11) {
@@ -213,7 +336,10 @@ fun ReportsScreen(
                                 },
                                 modifier = Modifier.testTag("reports_next_month")
                             ) {
-                                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = stringResource(R.string.cd_next_month))
+                                Icon(
+                                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = stringResource(R.string.cd_next_month)
+                                )
                             }
                         }
 
@@ -222,20 +348,36 @@ fun ReportsScreen(
                                 SegmentedButton(
                                     selected = !allBusinessesScope,
                                     onClick = { allBusinessesScope = false },
-                                    shape = SegmentedButtonDefaults.itemShape(0, 2)
-                                ) { Text(activeBusiness.name, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
+                                    shape = SegmentedButtonDefaults.itemShape(0, 2),
+                                    modifier = Modifier.testTag("reports_scope_active")
+                                ) {
+                                    Text(
+                                        activeBusiness.name,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                                 SegmentedButton(
                                     selected = allBusinessesScope,
                                     onClick = { allBusinessesScope = true },
-                                    shape = SegmentedButtonDefaults.itemShape(1, 2)
-                                ) { Text("All ($businessCount)", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
+                                    shape = SegmentedButtonDefaults.itemShape(1, 2),
+                                    modifier = Modifier.testTag("reports_scope_all")
+                                ) {
+                                    Text(
+                                        "All ($businessCount)",
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
 
-            // Financial KPI Grid
+            // Financial KPI Grid for Selected Month
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(
@@ -243,14 +385,14 @@ fun ReportsScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         KpiCard(
-                            label = "Gross Sales (${scopedInvoices.size})",
-                            value = Formatters.formatPkr(grossSales),
-                            accent = SafeStockGreen,
+                            label = "Gross Income (${scopedInvoices.size})",
+                            value = Formatters.formatPkr(grossSales, currency),
+                            accent = primaryColor,
                             modifier = Modifier.weight(1f)
                         )
                         KpiCard(
                             label = "Expenses (${scopedExpenses.size})",
-                            value = Formatters.formatPkr(totalExpenses),
+                            value = Formatters.formatPkr(totalExpenses, currency),
                             accent = ExpiredCrimson,
                             modifier = Modifier.weight(1f)
                         )
@@ -261,23 +403,222 @@ fun ReportsScreen(
                     ) {
                         KpiCard(
                             label = "Net Profit / Loss",
-                            value = Formatters.formatPkr(netProfit),
+                            value = Formatters.formatPkr(netProfit, currency),
                             accent = if (netProfit >= 0) SafeStockGreen else ExpiredCrimson,
                             modifier = Modifier.weight(1f)
                         )
                         KpiCard(
                             label = "Tax Collected",
-                            value = Formatters.formatPkr(taxCollected),
+                            value = Formatters.formatPkr(taxCollected, currency),
                             accent = HarvestAmberSecondary,
                             modifier = Modifier.weight(1f)
                         )
                     }
                     KpiCard(
                         label = "Current Inventory Valuation (Purchase Cost)",
-                        value = Formatters.formatPkr(stockValuation),
+                        value = Formatters.formatPkr(stockValuation, currency),
                         accent = MaterialTheme.colorScheme.tertiary,
                         modifier = Modifier.fillMaxWidth()
                     )
+                }
+            }
+
+            // 6-Month Monthly Income vs Expense Grouped Bar Chart (Room SQL Aggregates)
+            item {
+                val activeBucket = monthlyBuckets.getOrElse(focusedMonthIndex) { monthlyBuckets.last() }
+                Surface(
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, outlineColor),
+                    modifier = Modifier.testTag("reports_monthly_income_expense_chart")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "6-Month Income vs Expenses",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "Tap any month to inspect exact Room DB totals",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                LegendDot(primaryColor, "Income")
+                                LegendDot(ExpiredCrimson, "Expense")
+                            }
+                        }
+
+                        // Focused Month Callout Strip
+                        Surface(
+                            shape = MaterialTheme.shapes.medium,
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        text = activeBucket.yearMonth,
+                                        style = MonoCodeSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "Net: ${Formatters.formatCompactPkr(activeBucket.netProfit, currency)}",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (activeBucket.netProfit >= 0) SafeStockGreen else ExpiredCrimson
+                                    )
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text("Income", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(
+                                            text = Formatters.formatCompactPkr(activeBucket.income, currency),
+                                            style = MonoCodeSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = primaryColor
+                                        )
+                                    }
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text("Expense", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(
+                                            text = Formatters.formatCompactPkr(activeBucket.expense, currency),
+                                            style = MonoCodeSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = ExpiredCrimson
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        MonthlyGroupedBarChart(
+                            buckets = monthlyBuckets,
+                            selectedIndex = focusedMonthIndex,
+                            onSelectIndex = { focusedMonthIndex = it },
+                            incomeColor = primaryColor,
+                            expenseColor = ExpiredCrimson,
+                            gridColor = outlineColor,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(175.dp)
+                        )
+
+                        // 6-Month Cumulative Footer
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "6M Income: ${Formatters.formatCompactPkr(sixMonthIncomeTotal, currency)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = primaryColor,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "6M Net: ${Formatters.formatCompactPkr(sixMonthNetTotal, currency)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (sixMonthNetTotal >= 0) SafeStockGreen else ExpiredCrimson,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Business Growth Trend (6-Month Net Profit Line & Area Chart + MoM Growth Badge)
+            item {
+                val isPositiveGrowth = momGrowthPercent >= 0.0
+                val growthBadgeBg = if (isPositiveGrowth) SafeStockBg else ExpiredBg
+                val growthBadgeFg = if (isPositiveGrowth) SafeStockGreen else ExpiredCrimson
+
+                Surface(
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, outlineColor),
+                    modifier = Modifier.testTag("reports_growth_trend_chart")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Business Growth Trend",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "6-month net profit trajectory",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = growthBadgeBg
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (isPositiveGrowth) Icons.AutoMirrored.Filled.TrendingUp else Icons.AutoMirrored.Filled.TrendingDown,
+                                        contentDescription = null,
+                                        tint = growthBadgeFg,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = String.format(
+                                            Locale.US,
+                                            "%s%.1f%% MoM",
+                                            if (isPositiveGrowth) "+" else "",
+                                            momGrowthPercent
+                                        ),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = growthBadgeFg,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            }
+                        }
+
+                        BusinessGrowthAreaChart(
+                            buckets = monthlyBuckets,
+                            lineColor = primaryColor,
+                            gridColor = outlineColor,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(160.dp)
+                        )
+                    }
                 }
             }
 
@@ -286,7 +627,7 @@ fun ReportsScreen(
                 Surface(
                     shape = MaterialTheme.shapes.large,
                     color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    border = BorderStroke(1.dp, outlineColor)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Row(
@@ -296,13 +637,15 @@ fun ReportsScreen(
                         ) {
                             Text("Weekly Sales vs Expenses", style = MaterialTheme.typography.titleMedium)
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                LegendDot(AgriLeafPrimary, "Sales")
+                                LegendDot(primaryColor, "Sales")
                                 LegendDot(ExpiredCrimson, "Expenses")
                             }
                         }
                         Spacer(Modifier.height(14.dp))
                         WeeklyBarChart(
                             buckets = weeklyBuckets,
+                            salesColor = primaryColor,
+                            gridColor = outlineColor,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(150.dp)
@@ -316,7 +659,7 @@ fun ReportsScreen(
                 Surface(
                     shape = MaterialTheme.shapes.large,
                     color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    border = BorderStroke(1.dp, outlineColor)
                 ) {
                     Column(
                         modifier = Modifier.padding(16.dp),
@@ -338,19 +681,29 @@ fun ReportsScreen(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                                        Text(cat, style = MaterialTheme.typography.bodyMedium)
                                         Text(
-                                            text = "${Formatters.formatPkr(sum)} (${(fraction * 100).toInt()}%)",
+                                            text = cat,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            text = "${Formatters.formatPkr(sum, currency)} (${(fraction * 100).toInt()}%)",
                                             style = MonoCodeSmall,
-                                            fontWeight = FontWeight.SemiBold
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            softWrap = false
                                         )
                                     }
                                     LinearProgressIndicator(
                                         progress = { fraction },
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .height(7.dp),
-                                        color = MaterialTheme.colorScheme.primary,
+                                            .height(7.dp)
+                                            .clip(RoundedCornerShape(4.dp)),
+                                        color = primaryColor,
                                         trackColor = MaterialTheme.colorScheme.surfaceVariant
                                     )
                                 }
@@ -360,103 +713,425 @@ fun ReportsScreen(
                 }
             }
 
-            // Export Center
+            // Admin / Staff Audit Activity Summary
             item {
                 Surface(
                     shape = MaterialTheme.shapes.large,
                     color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    border = BorderStroke(1.dp, outlineColor),
+                    modifier = Modifier.testTag("reports_admin_activity_card")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text("Transactions by Admin / Staff", style = MaterialTheme.typography.titleMedium)
+                        if (adminSummaries.isEmpty()) {
+                            Text(
+                                text = "No transactions recorded for this month.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            adminSummaries.forEach { summary ->
+                                Surface(
+                                    shape = MaterialTheme.shapes.medium,
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(34.dp)
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.primaryContainer),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Person,
+                                                contentDescription = null,
+                                                tint = primaryColor,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                        Spacer(Modifier.width(10.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = summary.adminName,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = "${summary.invoiceCount} sales • ${summary.expenseCount} expenses",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            Text(
+                                                text = "+${Formatters.formatCompactPkr(summary.salesTotal, currency)}",
+                                                style = MonoCodeSmall,
+                                                color = SafeStockGreen,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            if (summary.expenseTotal > 0) {
+                                                Text(
+                                                    text = "-${Formatters.formatCompactPkr(summary.expenseTotal, currency)}",
+                                                    style = MonoCodeSmall,
+                                                    color = ExpiredCrimson
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Export Center (RBAC Gated)
+            item {
+                Surface(
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, outlineColor)
                 ) {
                     Column(
                         modifier = Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text("Export Monthly Report & Data", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            text = "Generate branded PDF summaries or Excel-compatible CSV spreadsheets.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        if (!canExportData) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "Your assigned role does not include PDF/CSV export permissions.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = "Generate branded PDF summaries or Excel-compatible CSV spreadsheets including admin audit columns.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
 
-                        Button(
-                            onClick = {
-                                scope.launch {
-                                    val pdf = onGenerateReportPdf(selectedYear, selectedMonth, allBusinessesScope)
-                                    ShareHelper.shareFileGeneric(
-                                        context = context,
-                                        file = pdf,
-                                        mimeType = "application/pdf",
-                                        chooserTitle = "Share Monthly Report PDF"
-                                    )
+                            Button(
+                                onClick = {
+                                    scope.launch {
+                                        val pdf = onGenerateReportPdf(selectedYear, selectedMonth, allBusinessesScope)
+                                        ShareHelper.shareFileGeneric(
+                                            context = context,
+                                            file = pdf,
+                                            mimeType = "application/pdf",
+                                            chooserTitle = "Share Monthly Report PDF"
+                                        )
+                                    }
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("export_monthly_pdf_button")
+                            ) {
+                                Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Share Monthly Financial Report (PDF)", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                            }
+
+                            ExportCsvRow(
+                                title = "Inventory Stock Ledger (CSV)",
+                                testTagPrefix = "export_inventory_csv",
+                                onShare = {
+                                    scope.launch {
+                                        val (file, _) = onExportCsv("inventory", selectedYear, selectedMonth, allBusinessesScope)
+                                        ShareHelper.shareFileGeneric(context, file, "text/csv", "Share Inventory CSV")
+                                    }
+                                },
+                                onSave = {
+                                    scope.launch {
+                                        val (file, csv) = onExportCsv("inventory", selectedYear, selectedMonth, allBusinessesScope)
+                                        pendingSaveCsvContent = csv
+                                        saveDocumentLauncher.launch(file.name)
+                                    }
                                 }
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("export_monthly_pdf_button")
-                        ) {
-                            Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Share Monthly Financial Report (PDF)")
+                            )
+
+                            ExportCsvRow(
+                                title = "Monthly Expenses Ledger (CSV)",
+                                testTagPrefix = "export_expenses_csv",
+                                onShare = {
+                                    scope.launch {
+                                        val (file, _) = onExportCsv("expenses", selectedYear, selectedMonth, allBusinessesScope)
+                                        ShareHelper.shareFileGeneric(context, file, "text/csv", "Share Expenses CSV")
+                                    }
+                                },
+                                onSave = {
+                                    scope.launch {
+                                        val (file, csv) = onExportCsv("expenses", selectedYear, selectedMonth, allBusinessesScope)
+                                        pendingSaveCsvContent = csv
+                                        saveDocumentLauncher.launch(file.name)
+                                    }
+                                }
+                            )
+
+                            ExportCsvRow(
+                                title = "Monthly Sales Invoices (CSV)",
+                                testTagPrefix = "export_sales_csv",
+                                onShare = {
+                                    scope.launch {
+                                        val (file, _) = onExportCsv("sales", selectedYear, selectedMonth, allBusinessesScope)
+                                        ShareHelper.shareFileGeneric(context, file, "text/csv", "Share Sales CSV")
+                                    }
+                                },
+                                onSave = {
+                                    scope.launch {
+                                        val (file, csv) = onExportCsv("sales", selectedYear, selectedMonth, allBusinessesScope)
+                                        pendingSaveCsvContent = csv
+                                        saveDocumentLauncher.launch(file.name)
+                                    }
+                                }
+                            )
                         }
-
-                        ExportCsvRow(
-                            title = "Inventory & Expiry Stock (CSV)",
-                            testTagPrefix = "export_inventory_csv",
-                            onShare = {
-                                scope.launch {
-                                    val (file, _) = onExportCsv("inventory", selectedYear, selectedMonth, allBusinessesScope)
-                                    ShareHelper.shareFileGeneric(context, file, "text/csv", "Share Inventory CSV")
-                                }
-                            },
-                            onSave = {
-                                scope.launch {
-                                    val (file, csv) = onExportCsv("inventory", selectedYear, selectedMonth, allBusinessesScope)
-                                    pendingSaveCsvContent = csv
-                                    saveDocumentLauncher.launch(file.name)
-                                }
-                            }
-                        )
-
-                        ExportCsvRow(
-                            title = "Monthly Expenses Ledger (CSV)",
-                            testTagPrefix = "export_expenses_csv",
-                            onShare = {
-                                scope.launch {
-                                    val (file, _) = onExportCsv("expenses", selectedYear, selectedMonth, allBusinessesScope)
-                                    ShareHelper.shareFileGeneric(context, file, "text/csv", "Share Expenses CSV")
-                                }
-                            },
-                            onSave = {
-                                scope.launch {
-                                    val (file, csv) = onExportCsv("expenses", selectedYear, selectedMonth, allBusinessesScope)
-                                    pendingSaveCsvContent = csv
-                                    saveDocumentLauncher.launch(file.name)
-                                }
-                            }
-                        )
-
-                        ExportCsvRow(
-                            title = "Monthly Sales Invoices (CSV)",
-                            testTagPrefix = "export_sales_csv",
-                            onShare = {
-                                scope.launch {
-                                    val (file, _) = onExportCsv("sales", selectedYear, selectedMonth, allBusinessesScope)
-                                    ShareHelper.shareFileGeneric(context, file, "text/csv", "Share Sales CSV")
-                                }
-                            },
-                            onSave = {
-                                scope.launch {
-                                    val (file, csv) = onExportCsv("sales", selectedYear, selectedMonth, allBusinessesScope)
-                                    pendingSaveCsvContent = csv
-                                    saveDocumentLauncher.launch(file.name)
-                                }
-                            }
-                        )
                     }
                 }
             }
 
             item { Spacer(Modifier.height(12.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun MonthlyGroupedBarChart(
+    buckets: List<MonthlyChartBucket>,
+    selectedIndex: Int,
+    onSelectIndex: (Int) -> Unit,
+    incomeColor: Color,
+    expenseColor: Color,
+    gridColor: Color,
+    modifier: Modifier = Modifier
+) {
+    val maxVal = max(
+        buckets.maxOfOrNull { max(it.income, it.expense) } ?: 1.0,
+        1.0
+    )
+    val selectedHighlight = incomeColor.copy(alpha = 0.08f)
+
+    Column(modifier = modifier) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+        ) {
+            val chartHeight = size.height - 8f
+            val count = buckets.size.coerceAtLeast(1)
+            val groupWidth = size.width / count
+            val barWidth = (groupWidth * 0.28f).coerceIn(8f, 28f)
+            val gap = 5f
+
+            // Subtle horizontal gridlines (25%, 50%, 75%, baseline)
+            listOf(0.25f, 0.5f, 0.75f, 1.0f).forEach { ratio ->
+                val y = chartHeight * ratio
+                drawLine(
+                    color = gridColor.copy(alpha = if (ratio == 1.0f) 0.9f else 0.45f),
+                    start = Offset(0f, y),
+                    end = Offset(size.width, y),
+                    strokeWidth = if (ratio == 1.0f) 2f else 1f
+                )
+            }
+
+            buckets.forEachIndexed { idx, bucket ->
+                val groupLeft = groupWidth * idx
+                val centerX = groupLeft + groupWidth / 2f
+
+                if (idx == selectedIndex) {
+                    drawRoundRect(
+                        color = selectedHighlight,
+                        topLeft = Offset(groupLeft + 4f, 0f),
+                        size = Size((groupWidth - 8f).coerceAtLeast(4f), chartHeight),
+                        cornerRadius = CornerRadius(10f, 10f)
+                    )
+                }
+
+                val incomeH = ((bucket.income / maxVal) * (chartHeight - 12f))
+                    .toFloat()
+                    .coerceAtLeast(if (bucket.income > 0) 6f else 2f)
+                val expenseH = ((bucket.expense / maxVal) * (chartHeight - 12f))
+                    .toFloat()
+                    .coerceAtLeast(if (bucket.expense > 0) 6f else 2f)
+
+                val alphaFactor = if (idx == selectedIndex) 1f else 0.72f
+                drawRoundRect(
+                    color = incomeColor.copy(alpha = alphaFactor),
+                    topLeft = Offset(centerX - barWidth - gap / 2f, chartHeight - incomeH),
+                    size = Size(barWidth, incomeH),
+                    cornerRadius = CornerRadius(6f, 6f)
+                )
+                drawRoundRect(
+                    color = expenseColor.copy(alpha = alphaFactor * 0.9f),
+                    topLeft = Offset(centerX + gap / 2f, chartHeight - expenseH),
+                    size = Size(barWidth, expenseH),
+                    cornerRadius = CornerRadius(6f, 6f)
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(modifier = Modifier.fillMaxWidth()) {
+            buckets.forEachIndexed { idx, bucket ->
+                val isSelected = idx == selectedIndex
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(
+                            if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.75f)
+                            else Color.Transparent
+                        )
+                        .clickable { onSelectIndex(idx) }
+                        .padding(vertical = 4.dp)
+                        .testTag("reports_month_bar_$idx"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = bucket.shortLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                        color = if (isSelected) incomeColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BusinessGrowthAreaChart(
+    buckets: List<MonthlyChartBucket>,
+    lineColor: Color,
+    gridColor: Color,
+    modifier: Modifier = Modifier
+) {
+    val values = buckets.map { it.netProfit }
+    val rawMax = values.maxOrNull() ?: 0.0
+    val rawMin = min(values.minOrNull() ?: 0.0, 0.0)
+    val span = max(rawMax - rawMin, 1.0)
+    val dotFill = MaterialTheme.colorScheme.surface
+
+    Column(modifier = modifier) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+        ) {
+            val topPad = 14f
+            val bottomPad = 12f
+            val usableH = (size.height - topPad - bottomPad).coerceAtLeast(10f)
+            val count = buckets.size.coerceAtLeast(1)
+            val stepX = if (count > 1) size.width / count else size.width
+
+            fun yFor(value: Double): Float {
+                val normalized = ((value - rawMin) / span).toFloat().coerceIn(0f, 1f)
+                return topPad + usableH * (1f - normalized)
+            }
+
+            // Horizontal reference lines + zero line
+            listOf(0f, 0.5f, 1f).forEach { r ->
+                val y = topPad + usableH * r
+                drawLine(
+                    color = gridColor.copy(alpha = 0.45f),
+                    start = Offset(0f, y),
+                    end = Offset(size.width, y),
+                    strokeWidth = 1f
+                )
+            }
+            val zeroY = yFor(0.0)
+            drawLine(
+                color = gridColor,
+                start = Offset(0f, zeroY),
+                end = Offset(size.width, zeroY),
+                strokeWidth = 2f
+            )
+
+            val points = buckets.mapIndexed { idx, bucket ->
+                Offset(stepX * idx + stepX / 2f, yFor(bucket.netProfit))
+            }
+
+            if (points.size >= 2) {
+                val linePath = Path().apply {
+                    moveTo(points.first().x, points.first().y)
+                    for (i in 1 until points.size) {
+                        val prev = points[i - 1]
+                        val curr = points[i]
+                        val midX = (prev.x + curr.x) / 2f
+                        cubicTo(midX, prev.y, midX, curr.y, curr.x, curr.y)
+                    }
+                }
+
+                val fillPath = Path().apply {
+                    addPath(linePath)
+                    lineTo(points.last().x, zeroY)
+                    lineTo(points.first().x, zeroY)
+                    close()
+                }
+
+                drawPath(
+                    path = fillPath,
+                    brush = Brush.verticalGradient(
+                        colors = listOf(lineColor.copy(alpha = 0.28f), lineColor.copy(alpha = 0.02f)),
+                        startY = topPad,
+                        endY = topPad + usableH
+                    )
+                )
+
+                drawPath(
+                    path = linePath,
+                    color = lineColor,
+                    style = Stroke(
+                        width = 5f,
+                        cap = StrokeCap.Round,
+                        join = StrokeJoin.Round
+                    )
+                )
+            }
+
+            points.forEachIndexed { idx, pt ->
+                val isNeg = buckets[idx].netProfit < 0
+                val ptColor = if (isNeg) ExpiredCrimson else lineColor
+                drawCircle(color = ptColor, radius = 8f, center = pt)
+                drawCircle(color = dotFill, radius = 4f, center = pt)
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(modifier = Modifier.fillMaxWidth()) {
+            buckets.forEach { bucket ->
+                Text(
+                    text = bucket.shortLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
         }
     }
 }
@@ -511,6 +1186,8 @@ private fun LegendDot(color: Color, label: String) {
 @Composable
 private fun WeeklyBarChart(
     buckets: List<Triple<String, Double, Double>>,
+    salesColor: Color,
+    gridColor: Color,
     modifier: Modifier = Modifier
 ) {
     val maxVal = max(
@@ -528,9 +1205,8 @@ private fun WeeklyBarChart(
             val barWidth = (groupWidth * 0.28f).coerceAtMost(36f)
             val gap = 6f
 
-            // Baseline
             drawLine(
-                color = Color(0xFFD4E1D8),
+                color = gridColor,
                 start = Offset(0f, chartHeight),
                 end = Offset(size.width, chartHeight),
                 strokeWidth = 2f
@@ -542,7 +1218,7 @@ private fun WeeklyBarChart(
                 val expH = ((exp / maxVal) * (chartHeight - 10f)).toFloat().coerceAtLeast(if (exp > 0) 6f else 2f)
 
                 drawRoundRect(
-                    color = AgriLeafPrimary,
+                    color = salesColor,
                     topLeft = Offset(centerX - barWidth - gap / 2f, chartHeight - salesH),
                     size = Size(barWidth, salesH),
                     cornerRadius = CornerRadius(6f, 6f)
@@ -563,7 +1239,7 @@ private fun WeeklyBarChart(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    textAlign = TextAlign.Center
                 )
             }
         }
@@ -597,24 +1273,26 @@ private fun ExportCsvRow(
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
             OutlinedButton(
                 onClick = onSave,
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                 modifier = Modifier
-                    .height(34.dp)
+                    .height(38.dp)
                     .testTag("${testTagPrefix}_save")
             ) {
                 Icon(Icons.Default.Download, contentDescription = "Save CSV", modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("Save", style = MaterialTheme.typography.labelSmall)
+                Text("Save", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
             }
             Spacer(Modifier.width(6.dp))
             IconButton(
                 onClick = onShare,
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(40.dp)
                     .testTag("${testTagPrefix}_share")
             ) {
                 Icon(Icons.Default.Share, contentDescription = "Share CSV", tint = MaterialTheme.colorScheme.primary)

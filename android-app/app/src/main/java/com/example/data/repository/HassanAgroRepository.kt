@@ -4,16 +4,21 @@ import android.content.Context
 import android.net.Uri
 import androidx.room.withTransaction
 import com.example.data.local.AppDatabase
+import com.example.data.local.AuthSession
 import com.example.data.local.BusinessEntity
 import com.example.data.local.ExpenseEntity
 import com.example.data.local.InvoiceEntity
 import com.example.data.local.InvoiceItemEntity
+import com.example.data.local.InvoicePaymentStatus
 import com.example.data.local.InvoiceWithItems
+import com.example.data.local.MonthlyTotalRow
 import com.example.data.local.PreferencesStore
 import com.example.data.local.ProductEntity
 import com.example.data.local.ServerSyncConfig
 import com.example.data.local.SyncStatus
 import com.example.data.remote.CustomServerClientFactory
+import com.example.data.remote.LoginRequest
+import com.example.data.remote.RegisterRequest
 import com.example.data.remote.SyncPushRequest
 import com.example.data.remote.toDto
 import com.example.data.remote.toEntity
@@ -23,6 +28,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import retrofit2.HttpException
 import java.io.File
 import java.io.FileOutputStream
@@ -31,7 +37,13 @@ data class SyncResult(
     val success: Boolean,
     val message: String,
     val pushedCount: Int = 0,
-    val pulledCount: Int = 0
+    val pulledCount: Int = 0,
+    val unauthorized: Boolean = false
+)
+
+data class AuthActionResult(
+    val success: Boolean,
+    val message: String
 )
 
 class HassanAgroRepository(
@@ -47,6 +59,7 @@ class HassanAgroRepository(
     val businessesFlow: Flow<List<BusinessEntity>> = businessDao.observeBusinesses()
     val activeBusinessIdFlow: Flow<String> = prefs.activeBusinessIdFlow
     val serverConfigFlow: Flow<ServerSyncConfig> = prefs.serverConfigFlow
+    val authSessionFlow: Flow<AuthSession> = prefs.authSessionFlow
 
     val allProductsFlow: Flow<List<ProductEntity>> = productDao.observeAllActive()
     val allInvoicesFlow: Flow<List<InvoiceWithItems>> = invoiceDao.observeAllActive()
@@ -68,20 +81,205 @@ class HassanAgroRepository(
     fun observeExpenses(businessId: String): Flow<List<ExpenseEntity>> =
         expenseDao.observeByBusiness(businessId)
 
+    fun observeMonthlySalesTotals(businessId: String, sinceMillis: Long): Flow<List<MonthlyTotalRow>> =
+        invoiceDao.observeMonthlySalesTotals(businessId, sinceMillis)
+
+    fun observeMonthlyExpenseTotals(businessId: String, sinceMillis: Long): Flow<List<MonthlyTotalRow>> =
+        expenseDao.observeMonthlyExpenseTotals(businessId, sinceMillis)
+
+    fun observeAllMonthlySalesTotals(allowedBusinessIds: Set<String>, sinceMillis: Long): Flow<List<MonthlyTotalRow>> =
+        if (allowedBusinessIds.isEmpty()) {
+            invoiceDao.observeAllMonthlySalesTotals(sinceMillis)
+        } else {
+            invoiceDao.observeMonthlySalesTotalsForBusinesses(allowedBusinessIds.toList(), sinceMillis)
+        }
+
+    fun observeAllMonthlyExpenseTotals(allowedBusinessIds: Set<String>, sinceMillis: Long): Flow<List<MonthlyTotalRow>> =
+        if (allowedBusinessIds.isEmpty()) {
+            expenseDao.observeAllMonthlyExpenseTotals(sinceMillis)
+        } else {
+            expenseDao.observeMonthlyExpenseTotalsForBusinesses(allowedBusinessIds.toList(), sinceMillis)
+        }
+
     suspend fun ensureInitialized() {
         prefs.ensureDeviceId()
-        val count = businessDao.countActiveBusinesses()
-        if (count == 0) {
-            val primary = BusinessEntity(
-                id = AppDatabase.DEFAULT_BUSINESS_ID,
-                name = "Hassan Agro",
-                tagline = "Crop Protection & Agri Inputs",
-                invoicePrefix = "HA",
-                defaultTaxRate = 0.0
-            )
-            businessDao.upsert(primary)
-            prefs.setActiveBusinessId(primary.id)
+    }
+
+    private fun extractErrorMessage(errorBody: String?, fallback: String): String {
+        if (errorBody.isNullOrBlank()) return fallback
+        return try {
+            val json = JSONObject(errorBody)
+            json.optString("message").ifBlank { fallback }
+        } catch (_: Exception) {
+            fallback
         }
+    }
+
+    private suspend fun clearLocalCache() {
+        db.withTransaction {
+            invoiceDao.deleteAllItems()
+            invoiceDao.deleteAll()
+            expenseDao.deleteAll()
+            productDao.deleteAll()
+            businessDao.deleteAll()
+        }
+    }
+
+    suspend fun login(serverBaseUrl: String, email: String, password: String): AuthActionResult =
+        withContext(Dispatchers.IO) {
+            val cleanUrl = serverBaseUrl.trim().ifBlank { PreferencesStore.DEFAULT_SERVER_URL }
+            if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
+                return@withContext AuthActionResult(false, "Server URL must start with http:// or https://")
+            }
+            try {
+                prefs.saveServerUrlOnly(cleanUrl)
+                val deviceId = prefs.ensureDeviceId()
+                val api = CustomServerClientFactory.createApi(cleanUrl, "", deviceId)
+                val resp = api.login(LoginRequest(email.trim(), password, deviceId))
+                val body = resp.body()
+                if (!resp.isSuccessful || body == null || !body.success || body.token.isNullOrBlank() || body.user == null) {
+                    val err = body?.message ?: extractErrorMessage(resp.errorBody()?.string(), "Invalid email or password")
+                    return@withContext AuthActionResult(false, err)
+                }
+
+                val previousUserId = prefs.authSessionFlow.first().userId
+                if (previousUserId != body.user.id) {
+                    clearLocalCache()
+                }
+
+                prefs.saveAuthSession(
+                    token = body.token,
+                    userId = body.user.id,
+                    userName = body.user.name,
+                    userEmail = body.user.email,
+                    roleId = body.user.roleId,
+                    roleName = body.user.roleName,
+                    permissions = body.user.permissions,
+                    allowedBusinessIds = body.user.allowedBusinessIds
+                )
+
+                // Immediately pull businesses, products, invoices & expenses from server
+                syncWithCustomServer()
+
+                val availableBusinesses = businessDao.observeBusinesses().first()
+                    .filter { body.user.allowedBusinessIds.isEmpty() || body.user.allowedBusinessIds.contains(it.id) }
+                if (availableBusinesses.isNotEmpty()) {
+                    prefs.setActiveBusinessId(availableBusinesses.first().id)
+                }
+
+                AuthActionResult(true, body.message ?: "Welcome back, ${body.user.name}!")
+            } catch (e: Exception) {
+                AuthActionResult(false, "Unable to reach server: ${e.localizedMessage ?: "Check internet or Server URL"}")
+            }
+        }
+
+    suspend fun register(
+        serverBaseUrl: String,
+        name: String,
+        email: String,
+        password: String,
+        businessName: String,
+        businessType: String,
+        themeKey: String,
+        currencySymbol: String
+    ): AuthActionResult = withContext(Dispatchers.IO) {
+        val cleanUrl = serverBaseUrl.trim().ifBlank { PreferencesStore.DEFAULT_SERVER_URL }
+        if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
+            return@withContext AuthActionResult(false, "Server URL must start with http:// or https://")
+        }
+        try {
+            prefs.saveServerUrlOnly(cleanUrl)
+            val deviceId = prefs.ensureDeviceId()
+            val api = CustomServerClientFactory.createApi(cleanUrl, "", deviceId)
+            val resp = api.register(
+                RegisterRequest(
+                    name = name.trim(),
+                    email = email.trim(),
+                    password = password,
+                    businessName = businessName.trim(),
+                    businessType = businessType,
+                    themeKey = themeKey,
+                    currencySymbol = currencySymbol.trim().ifBlank { "Rs." },
+                    deviceId = deviceId
+                )
+            )
+            val body = resp.body()
+            if (!resp.isSuccessful || body == null || !body.success || body.token.isNullOrBlank() || body.user == null) {
+                val err = body?.message ?: extractErrorMessage(resp.errorBody()?.string(), "Could not create account")
+                return@withContext AuthActionResult(false, err)
+            }
+
+            clearLocalCache()
+
+            prefs.saveAuthSession(
+                token = body.token,
+                userId = body.user.id,
+                userName = body.user.name,
+                userEmail = body.user.email,
+                roleId = body.user.roleId,
+                roleName = body.user.roleName,
+                permissions = body.user.permissions,
+                allowedBusinessIds = body.user.allowedBusinessIds
+            )
+
+            syncWithCustomServer()
+
+            val targetBizId = body.businessId ?: body.user.allowedBusinessIds.firstOrNull()
+            if (!targetBizId.isNullOrBlank()) {
+                prefs.setActiveBusinessId(targetBizId)
+            }
+
+            AuthActionResult(true, body.message ?: "Welcome to Business Manager!")
+        } catch (e: Exception) {
+            AuthActionResult(false, "Unable to reach server: ${e.localizedMessage ?: "Check internet or Server URL"}")
+        }
+    }
+
+    suspend fun refreshSession(): Boolean = withContext(Dispatchers.IO) {
+        val session = prefs.authSessionFlow.first()
+        val config = prefs.serverConfigFlow.first()
+        if (!session.isLoggedIn || !config.isConfigured) return@withContext session.isLoggedIn
+        try {
+            val deviceId = prefs.ensureDeviceId()
+            val api = CustomServerClientFactory.createApi(config.serverBaseUrl, session.authToken, deviceId)
+            val resp = api.me()
+            if (resp.code() == 401 || resp.code() == 403) {
+                prefs.clearAuthSession()
+                return@withContext false
+            }
+            val user = resp.body()?.user
+            if (resp.isSuccessful && user != null) {
+                prefs.updateAuthUser(
+                    userId = user.id,
+                    userName = user.name,
+                    userEmail = user.email,
+                    roleId = user.roleId,
+                    roleName = user.roleName,
+                    permissions = user.permissions,
+                    allowedBusinessIds = user.allowedBusinessIds
+                )
+            }
+            true
+        } catch (_: Exception) {
+            // Keep cached session active while offline
+            true
+        }
+    }
+
+    suspend fun logout() = withContext(Dispatchers.IO) {
+        val session = prefs.authSessionFlow.first()
+        val config = prefs.serverConfigFlow.first()
+        if (session.isLoggedIn && config.isConfigured) {
+            try {
+                val deviceId = prefs.ensureDeviceId()
+                val api = CustomServerClientFactory.createApi(config.serverBaseUrl, session.authToken, deviceId)
+                api.logout()
+            } catch (_: Exception) {
+                // Best effort server logout
+            }
+        }
+        prefs.clearAuthSession()
+        clearLocalCache()
     }
 
     suspend fun setActiveBusiness(businessId: String) {
@@ -96,6 +294,7 @@ class HassanAgroRepository(
                 syncStatus = SyncStatus.PENDING.name
             )
         )
+        prefs.addAllowedBusinessIdLocally(business.id)
     }
 
     suspend fun deleteBusiness(businessId: String): Boolean {
@@ -128,9 +327,11 @@ class HassanAgroRepository(
     suspend fun findProductByBarcode(businessId: String, barcode: String): ProductEntity? =
         productDao.findByBarcode(businessId, barcode.trim())
 
-    suspend fun saveProduct(product: ProductEntity) {
+    suspend fun saveProduct(product: ProductEntity, performedById: String, performedByName: String) {
         productDao.upsert(
             product.copy(
+                performedById = performedById,
+                performedByName = performedByName,
                 updatedAt = System.currentTimeMillis(),
                 syncStatus = SyncStatus.PENDING.name
             )
@@ -141,7 +342,9 @@ class HassanAgroRepository(
         productId: String,
         addQty: Int,
         newBatchNumber: String,
-        newExpiryMillis: Long
+        newExpiryMillis: Long,
+        performedById: String,
+        performedByName: String
     ) {
         val existing = productDao.getById(productId) ?: return
         productDao.upsert(
@@ -149,6 +352,8 @@ class HassanAgroRepository(
                 stockQty = existing.stockQty + addQty,
                 batchNumber = newBatchNumber.ifBlank { existing.batchNumber },
                 expiryDateMillis = newExpiryMillis,
+                performedById = performedById,
+                performedByName = performedByName,
                 updatedAt = System.currentTimeMillis(),
                 syncStatus = SyncStatus.PENDING.name
             )
@@ -161,16 +366,20 @@ class HassanAgroRepository(
 
     suspend fun nextInvoiceNumber(business: BusinessEntity): String {
         val nextIndex = invoiceDao.countForBusiness(business.id) + 1
-        val prefix = business.invoicePrefix.ifBlank { "HA" }.uppercase()
+        val prefix = business.invoicePrefix.ifBlank { "BM" }.uppercase()
         return "$prefix-${nextIndex.toString().padStart(4, '0')}"
     }
 
     suspend fun createInvoiceAndDeductStock(
         invoice: InvoiceEntity,
-        items: List<InvoiceItemEntity>
+        items: List<InvoiceItemEntity>,
+        performedById: String,
+        performedByName: String
     ): InvoiceWithItems {
         val now = System.currentTimeMillis()
         val stampedInvoice = invoice.copy(
+            performedById = performedById,
+            performedByName = performedByName,
             createdAt = now,
             updatedAt = now,
             syncStatus = SyncStatus.PENDING.name
@@ -178,13 +387,18 @@ class HassanAgroRepository(
         db.withTransaction {
             invoiceDao.upsertInvoiceWithItems(stampedInvoice, items)
             items.forEach { item ->
-                productDao.adjustStock(item.productId, -item.quantity, now)
+                productDao.adjustStock(item.productId, -item.quantity, now, performedById, performedByName)
             }
         }
         return InvoiceWithItems(stampedInvoice, items)
     }
 
-    suspend fun recordInvoicePayment(invoiceId: String, additionalAmount: Double): InvoiceWithItems? {
+    suspend fun recordInvoicePayment(
+        invoiceId: String,
+        additionalAmount: Double,
+        performedById: String,
+        performedByName: String
+    ): InvoiceWithItems? {
         if (additionalAmount <= 0.0) return null
         val existing = invoiceDao.getWithItems(invoiceId) ?: return null
         val inv = existing.invoice
@@ -192,14 +406,16 @@ class HassanAgroRepository(
         val newPaid = (inv.amountPaid + additionalAmount).coerceAtMost(inv.grandTotal)
         val newBalance = (inv.grandTotal - newPaid).coerceAtLeast(0.0)
         val newStatus = when {
-            newBalance <= 0.01 -> com.example.data.local.InvoicePaymentStatus.PAID.name
-            newPaid > 0.0 -> com.example.data.local.InvoicePaymentStatus.PARTIAL.name
-            else -> com.example.data.local.InvoicePaymentStatus.CREDIT.name
+            newBalance <= 0.01 -> InvoicePaymentStatus.PAID.name
+            newPaid > 0.0 -> InvoicePaymentStatus.PARTIAL.name
+            else -> InvoicePaymentStatus.CREDIT.name
         }
         val updated = inv.copy(
             amountPaid = newPaid,
             balanceDue = newBalance,
             paymentStatus = newStatus,
+            performedById = performedById.ifBlank { inv.performedById },
+            performedByName = performedByName.ifBlank { inv.performedByName },
             updatedAt = System.currentTimeMillis(),
             syncStatus = SyncStatus.PENDING.name
         )
@@ -207,29 +423,37 @@ class HassanAgroRepository(
         return existing.copy(invoice = updated)
     }
 
-    suspend fun returnInvoiceAndRestock(invoiceId: String): Boolean {
+    suspend fun returnInvoiceAndRestock(
+        invoiceId: String,
+        performedById: String,
+        performedByName: String
+    ): Boolean {
         val existing = invoiceDao.getWithItems(invoiceId) ?: return false
         if (existing.invoice.isReturned) return false
         val now = System.currentTimeMillis()
         val returnedInvoice = existing.invoice.copy(
             isReturned = true,
-            paymentStatus = com.example.data.local.InvoicePaymentStatus.RETURNED.name,
+            paymentStatus = InvoicePaymentStatus.RETURNED.name,
             balanceDue = 0.0,
+            performedById = performedById.ifBlank { existing.invoice.performedById },
+            performedByName = performedByName.ifBlank { existing.invoice.performedByName },
             updatedAt = now,
             syncStatus = SyncStatus.PENDING.name
         )
         db.withTransaction {
             invoiceDao.upsertInvoice(returnedInvoice)
             existing.items.forEach { item ->
-                productDao.adjustStock(item.productId, item.quantity, now)
+                productDao.adjustStock(item.productId, item.quantity, now, performedById, performedByName)
             }
         }
         return true
     }
 
-    suspend fun saveExpense(expense: ExpenseEntity) {
+    suspend fun saveExpense(expense: ExpenseEntity, performedById: String, performedByName: String) {
         expenseDao.upsert(
             expense.copy(
+                performedById = performedById,
+                performedByName = performedByName,
                 updatedAt = System.currentTimeMillis(),
                 syncStatus = SyncStatus.PENDING.name
             )
@@ -256,7 +480,9 @@ class HassanAgroRepository(
                     return@withContext Result.failure(IllegalArgumentException("Server URL must start with http:// or https://"))
                 }
                 val deviceId = prefs.ensureDeviceId()
-                val api = CustomServerClientFactory.createApi(baseUrl, apiToken, deviceId)
+                val session = prefs.authSessionFlow.first()
+                val tokenToUse = apiToken.trim().ifBlank { session.authToken }
+                val api = CustomServerClientFactory.createApi(baseUrl, tokenToUse, deviceId)
                 val response = api.health()
                 Result.success(response.message ?: "Connected (${response.status})")
             } catch (e: Exception) {
@@ -266,17 +492,19 @@ class HassanAgroRepository(
 
     suspend fun syncWithCustomServer(): SyncResult = withContext(Dispatchers.IO) {
         val config = prefs.serverConfigFlow.first()
+        val session = prefs.authSessionFlow.first()
         if (!config.isConfigured) {
             return@withContext SyncResult(
                 success = false,
                 message = "No server configured. Running in Offline Mode."
             )
         }
+        val activeToken = session.authToken.ifBlank { config.apiToken }
         val deviceId = prefs.ensureDeviceId()
         try {
             val api = CustomServerClientFactory.createApi(
                 baseUrl = config.serverBaseUrl,
-                apiToken = config.apiToken,
+                apiToken = activeToken,
                 deviceId = deviceId
             )
 
@@ -346,6 +574,19 @@ class HassanAgroRepository(
                 }
             }
 
+            // Apply live role/permission/business scope updates pushed from server
+            pullResp.user?.let { refreshedUser ->
+                prefs.updateAuthUser(
+                    userId = refreshedUser.id,
+                    userName = refreshedUser.name,
+                    userEmail = refreshedUser.email,
+                    roleId = refreshedUser.roleId,
+                    roleName = refreshedUser.roleName,
+                    permissions = refreshedUser.permissions,
+                    allowedBusinessIds = refreshedUser.allowedBusinessIds
+                )
+            }
+
             prefs.updateLastSyncTimestamp(pullResp.serverTime)
             SyncResult(
                 success = true,
@@ -353,14 +594,21 @@ class HassanAgroRepository(
                 pushedCount = totalToPush,
                 pulledCount = pulled
             )
+        } catch (http: HttpException) {
+            if (http.code() == 401) {
+                prefs.clearAuthSession()
+                return@withContext SyncResult(
+                    success = false,
+                    message = "Session expired. Please sign in again.",
+                    unauthorized = true
+                )
+            }
+            val msg = extractErrorMessage(http.response()?.errorBody()?.string(), "HTTP ${http.code()} error")
+            SyncResult(success = false, message = "Sync failed: $msg")
         } catch (e: Exception) {
             SyncResult(
                 success = false,
-                message = if (e is HttpException && e.code() == 401) {
-                    "Sync failed (401): API token does not match the server. Check Settings → Bearer API Token / Key."
-                } else {
-                    "Sync failed (offline data safe): ${e.localizedMessage ?: "Network error"}"
-                }
+                message = "Sync failed (offline data safe): ${e.localizedMessage ?: "Network error"}"
             )
         }
     }

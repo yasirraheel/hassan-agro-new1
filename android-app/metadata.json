@@ -1,6 +1,6 @@
 {
-  "name": "Hassan Agro",
-  "description": "Multi-business pesticide inventory, expiry tracking, 4-tier pricing, tax-aware PDF invoicing, expense ledger, monthly reports, and custom server sync.",
+  "name": "Business Manager",
+  "description": "Universal multi-business manager with per-business color themes, customizable categories & tracking, POS billing, role-based multi-admin auth, audit trail, monthly growth charts, and server sync.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

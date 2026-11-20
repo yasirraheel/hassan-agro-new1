@@ -6,9 +6,7 @@
     <form method="GET" action="{{ route('admin.expenses') }}" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
         <input class="input" type="month" name="month" value="{{ $month }}" style="width:auto;">
         <button type="submit" class="btn">Filter Month</button>
-        @if($month)
-            <a href="{{ route('admin.expenses') }}" class="btn">Clear</a>
-        @endif
+        @if($month)<a href="{{ route('admin.expenses') }}" class="btn">Clear</a>@endif
         <span class="badge badge-red" style="font-size:13px; padding:6px 12px;">Total: Rs. {{ number_format($totalAmount, 0) }}</span>
     </form>
     <div style="display:flex; gap:8px; flex-wrap:wrap;">
@@ -25,7 +23,7 @@
                     <th>Date</th>
                     <th>Expense Title</th>
                     <th>Category</th>
-                    <th>Payment / Payee</th>
+                    <th>Performed By</th>
                     <th style="text-align:right;">Amount</th>
                     <th style="text-align:right;">Actions</th>
                 </tr>
@@ -42,21 +40,22 @@
                         <td>
                             <strong>{{ $e->title }}</strong>
                             <div style="font-size:12px; color:var(--muted);">
-                                {{ $bizMap[$e->business_id]->name ?? '' }}
-                                @if($e->notes) · {{ $e->notes }} @endif
+                                {{ $bizMap[$e->business_id]->name ?? '' }} · {{ $e->payment_method }}
+                                @if($e->payee) · {{ $e->payee }} @endif
                             </div>
                         </td>
                         <td><span class="badge badge-amber">{{ $e->category }}</span></td>
                         <td>
-                            <div>{{ $e->payment_method }}</div>
-                            @if($e->payee)<div style="font-size:12px; color:var(--muted);">{{ $e->payee }}</div>@endif
+                            @if(!empty($e->performed_by_name))
+                                <span class="badge badge-primary">{{ $e->performed_by_name }}</span>
+                            @else
+                                <span style="color:var(--muted); font-size:12px;">—</span>
+                            @endif
                         </td>
-                        <td class="num" style="text-align:right; color:var(--danger); font-weight:700;">
-                            Rs. {{ number_format($e->amount, 0) }}
-                        </td>
+                        <td class="num" style="text-align:right; color:var(--danger); font-weight:700;">Rs. {{ number_format($e->amount, 0) }}</td>
                         <td style="text-align:right; white-space:nowrap;">
                             <button type="button" class="btn btn-sm" onclick='openExpenseModal(@json($eJson))'>Edit</button>
-                            <form method="POST" action="{{ route('admin.expenses.delete', $e->id) }}" style="display:inline;" onsubmit="return confirm('Delete this expense and sync to phones?')">
+                            <form method="POST" action="{{ route('admin.expenses.delete', $e->id) }}" style="display:inline;" onsubmit="return confirm('Delete this expense?')">
                                 @csrf
                                 @method('DELETE')
                                 <button type="submit" class="btn btn-sm btn-danger">Delete</button>
@@ -91,27 +90,19 @@
                 </div>
                 <div class="field form-full">
                     <label>Title *</label>
-                    <input class="input" name="title" id="exp_title" required placeholder="e.g. Warehouse Rent / Freight Delivery">
+                    <input class="input" name="title" id="exp_title" required>
                 </div>
                 <div class="field">
                     <label>Category *</label>
-                    <select name="category" id="exp_cat" required>
-                        @foreach(['Stock Purchase', 'Transport & Freight', 'Shop Rent', 'Staff Salary', 'Utilities', 'Marketing', 'Maintenance', 'Other'] as $cat)
-                            <option value="{{ $cat }}">{{ $cat }}</option>
-                        @endforeach
-                    </select>
+                    <input class="input" name="category" id="exp_cat" required value="Stock Purchase">
                 </div>
                 <div class="field">
-                    <label>Amount (PKR) *</label>
+                    <label>Amount *</label>
                     <input class="input" type="number" step="0.01" min="0.01" name="amount" id="exp_amount" required>
                 </div>
                 <div class="field">
                     <label>Payment Method *</label>
-                    <select name="payment_method" id="exp_method" required>
-                        @foreach(['Cash', 'Bank Transfer', 'JazzCash / EasyPaisa', 'Cheque'] as $pm)
-                            <option value="{{ $pm }}">{{ $pm }}</option>
-                        @endforeach
-                    </select>
+                    <input class="input" name="payment_method" id="exp_method" required value="Cash">
                 </div>
                 <div class="field">
                     <label>Date *</label>
@@ -119,11 +110,11 @@
                 </div>
                 <div class="field form-full">
                     <label>Payee / Vendor</label>
-                    <input class="input" name="payee" id="exp_payee" placeholder="Paid to">
+                    <input class="input" name="payee" id="exp_payee">
                 </div>
                 <div class="field form-full">
                     <label>Notes</label>
-                    <input class="input" name="notes" id="exp_notes" placeholder="Optional details">
+                    <input class="input" name="notes" id="exp_notes">
                 </div>
             </div>
             <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
@@ -160,6 +151,8 @@ function openExpenseModal(e = null) {
         form.action = expStoreUrl;
         method.value = 'POST';
         form.reset();
+        document.getElementById('exp_cat').value = 'Stock Purchase';
+        document.getElementById('exp_method').value = 'Cash';
         document.getElementById('exp_date').value = "{{ date('Y-m-d') }}";
     }
     openModal('expenseModal');

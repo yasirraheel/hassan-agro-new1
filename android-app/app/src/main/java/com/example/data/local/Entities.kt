@@ -81,20 +81,56 @@ enum class ExpiryStatus(val label: String) {
 data class BusinessEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     val name: String,
-    val tagline: String = "Crop Protection & Agri Inputs",
+    val tagline: String = "Retail & Wholesale Management",
     val phone: String = "",
     val email: String = "",
     val address: String = "",
     val taxId: String = "",
-    val invoicePrefix: String = "HA",
+    val invoicePrefix: String = "BM",
+    val themeKey: String = "OCEAN",
+    val businessType: String = "GENERAL",
+    val currencySymbol: String = "Rs.",
+    val trackExpiry: Boolean = false,
+    val trackBatch: Boolean = false,
+    val batchFieldLabel: String = "Batch / Lot",
+    val packSizeLabel: String = "Unit / Size",
+    val productCategoriesJson: String = "",
+    val expenseCategoriesJson: String = "",
+    val paymentMethodsJson: String = "",
+    val pricingTierLabelsJson: String = "",
     val defaultTaxRate: Double = 0.0,
-    val invoiceFooter: String = "Thank you for your business. Check batch & expiry before use.",
+    val invoiceFooter: String = "Thank you for your business!",
     val logoFilePath: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val isDeleted: Boolean = false,
     val syncStatus: String = SyncStatus.PENDING.name
-)
+) {
+    fun productCategories(): List<String> = CustomizationJson.decodeList(
+        productCategoriesJson,
+        BusinessTypePreset.fromKey(businessType).productCategories
+    )
+
+    fun expenseCategories(): List<String> = CustomizationJson.decodeList(
+        expenseCategoriesJson,
+        BusinessTypePreset.fromKey(businessType).expenseCategories
+    )
+
+    fun paymentMethods(): List<String> = CustomizationJson.decodeList(
+        paymentMethodsJson,
+        BusinessTypePreset.fromKey(businessType).paymentMethods
+    )
+
+    fun tierLabel(tier: PricingTier): String {
+        val map = CustomizationJson.decodeTierLabels(
+            pricingTierLabelsJson,
+            BusinessTypePreset.fromKey(businessType).pricingTierLabels
+        )
+        return map[tier.name] ?: tier.label
+    }
+
+    fun resolvedCurrency(): String = currencySymbol.trim().ifBlank { "Rs." }
+}
 
 @Entity(
     tableName = "products",
@@ -108,7 +144,7 @@ data class ProductEntity(
     val businessId: String,
     val name: String,
     val brand: String = "",
-    val category: String = PesticideCategory.INSECTICIDE.label,
+    val category: String = "General",
     val packSize: String = "",
     val barcode: String = "",
     val batchNumber: String = "",
@@ -120,6 +156,8 @@ data class ProductEntity(
     val distributorPrice: Double = 0.0,
     val wholesalerPrice: Double = 0.0,
     val retailPrice: Double = 0.0,
+    val performedById: String = "",
+    val performedByName: String = "",
     val updatedAt: Long = System.currentTimeMillis(),
     val isDeleted: Boolean = false,
     val syncStatus: String = SyncStatus.PENDING.name
@@ -168,6 +206,8 @@ data class InvoiceEntity(
     val balanceDue: Double = 0.0,
     val isReturned: Boolean = false,
     val notes: String = "",
+    val performedById: String = "",
+    val performedByName: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val isDeleted: Boolean = false,
@@ -212,6 +252,8 @@ data class ExpenseEntity(
     val paymentMethod: String = PaymentMethod.CASH.label,
     val payee: String = "",
     val notes: String = "",
+    val performedById: String = "",
+    val performedByName: String = "",
     val expenseDateMillis: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val isDeleted: Boolean = false,

@@ -1,5 +1,44 @@
--- Optional 1-click phpMyAdmin SQL import for Hostinger Shared Hosting
--- (Use this if you prefer phpMyAdmin instead of running `php artisan migrate`)
+-- Full MySQL schema for Business Manager Sync + RBAC + Themes (Hostinger Ready)
+
+CREATE TABLE IF NOT EXISTS `roles` (
+  `id` CHAR(36) NOT NULL,
+  `name` VARCHAR(100) NOT NULL,
+  `description` VARCHAR(255) NOT NULL DEFAULT '',
+  `permissions_json` TEXT NOT NULL,
+  `is_system` TINYINT(1) NOT NULL DEFAULT 0,
+  `created_at_ms` BIGINT NOT NULL DEFAULT 0,
+  `updated_at_ms` BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_roles_name` (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `app_users` (
+  `id` CHAR(36) NOT NULL,
+  `name` VARCHAR(150) NOT NULL,
+  `email` VARCHAR(191) NOT NULL,
+  `password_hash` VARCHAR(255) NOT NULL,
+  `role_id` CHAR(36) NOT NULL,
+  `business_ids_json` TEXT NOT NULL,
+  `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+  `last_login_ms` BIGINT NOT NULL DEFAULT 0,
+  `created_at_ms` BIGINT NOT NULL DEFAULT 0,
+  `updated_at_ms` BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_app_users_email` (`email`),
+  INDEX `idx_app_users_role` (`role_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `app_user_tokens` (
+  `id` CHAR(36) NOT NULL,
+  `user_id` CHAR(36) NOT NULL,
+  `token_hash` CHAR(64) NOT NULL,
+  `device_id` VARCHAR(100) NOT NULL DEFAULT '',
+  `created_at_ms` BIGINT NOT NULL DEFAULT 0,
+  `last_used_ms` BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_tokens_hash` (`token_hash`),
+  INDEX `idx_tokens_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `businesses` (
   `id` CHAR(36) NOT NULL,
@@ -9,7 +48,8 @@ CREATE TABLE IF NOT EXISTS `businesses` (
   `email` VARCHAR(255) NOT NULL DEFAULT '',
   `address` TEXT NULL,
   `tax_id` VARCHAR(255) NOT NULL DEFAULT '',
-  `invoice_prefix` VARCHAR(16) NOT NULL DEFAULT 'HA',
+  `invoice_prefix` VARCHAR(16) NOT NULL DEFAULT 'BM',
+  `theme_key` VARCHAR(32) NOT NULL DEFAULT 'OCEAN',
   `default_tax_rate` DECIMAL(8,2) NOT NULL DEFAULT 0.00,
   `invoice_footer` TEXT NULL,
   `created_at_ms` BIGINT NOT NULL DEFAULT 0,
@@ -26,7 +66,7 @@ CREATE TABLE IF NOT EXISTS `products` (
   `business_id` CHAR(36) NOT NULL,
   `name` VARCHAR(255) NOT NULL,
   `brand` VARCHAR(255) NOT NULL DEFAULT '',
-  `category` VARCHAR(64) NOT NULL DEFAULT 'Insecticide',
+  `category` VARCHAR(64) NOT NULL DEFAULT 'General',
   `pack_size` VARCHAR(64) NOT NULL DEFAULT '',
   `barcode` VARCHAR(128) NOT NULL DEFAULT '',
   `batch_number` VARCHAR(128) NOT NULL DEFAULT '',
@@ -38,6 +78,8 @@ CREATE TABLE IF NOT EXISTS `products` (
   `distributor_price` DECIMAL(14,2) NOT NULL DEFAULT 0.00,
   `wholesaler_price` DECIMAL(14,2) NOT NULL DEFAULT 0.00,
   `retail_price` DECIMAL(14,2) NOT NULL DEFAULT 0.00,
+  `performed_by_id` CHAR(36) NOT NULL DEFAULT '',
+  `performed_by_name` VARCHAR(150) NOT NULL DEFAULT '',
   `updated_at_ms` BIGINT NOT NULL DEFAULT 0,
   `server_modified_at_ms` BIGINT NOT NULL DEFAULT 0,
   `is_deleted` TINYINT(1) NOT NULL DEFAULT 0,
@@ -68,6 +110,8 @@ CREATE TABLE IF NOT EXISTS `invoices` (
   `balance_due` DECIMAL(14,2) NOT NULL DEFAULT 0.00,
   `is_returned` TINYINT(1) NOT NULL DEFAULT 0,
   `notes` TEXT NULL,
+  `performed_by_id` CHAR(36) NOT NULL DEFAULT '',
+  `performed_by_name` VARCHAR(150) NOT NULL DEFAULT '',
   `created_at_ms` BIGINT NOT NULL DEFAULT 0,
   `updated_at_ms` BIGINT NOT NULL DEFAULT 0,
   `server_modified_at_ms` BIGINT NOT NULL DEFAULT 0,
@@ -102,6 +146,8 @@ CREATE TABLE IF NOT EXISTS `expenses` (
   `payment_method` VARCHAR(64) NOT NULL DEFAULT 'Cash',
   `payee` VARCHAR(255) NOT NULL DEFAULT '',
   `notes` TEXT NULL,
+  `performed_by_id` CHAR(36) NOT NULL DEFAULT '',
+  `performed_by_name` VARCHAR(150) NOT NULL DEFAULT '',
   `expense_date_millis` BIGINT NOT NULL DEFAULT 0,
   `updated_at_ms` BIGINT NOT NULL DEFAULT 0,
   `server_modified_at_ms` BIGINT NOT NULL DEFAULT 0,

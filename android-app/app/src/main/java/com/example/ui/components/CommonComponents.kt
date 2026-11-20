@@ -1,13 +1,17 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,12 +30,14 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material3.Button
@@ -43,9 +49,11 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -54,6 +62,10 @@ import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,12 +74,13 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
@@ -75,6 +88,7 @@ import com.example.R
 import com.example.data.local.BusinessEntity
 import com.example.data.local.ExpiryStatus
 import com.example.data.local.ServerSyncConfig
+import com.example.ui.theme.AppThemeOption
 import com.example.ui.theme.ExpiredBg
 import com.example.ui.theme.ExpiredCrimson
 import com.example.ui.theme.ExpiringSoonAmber
@@ -257,7 +271,7 @@ fun CompactSearchBar(
 }
 
 /**
- * Clean Agri-Green single-line FilterChip (avoids yellow default selection tint and text wrapping).
+ * Clean single-line FilterChip styled with the active business's dynamic theme colors.
  */
 @Composable
 fun AgriFilterChip(
@@ -294,6 +308,207 @@ fun AgriFilterChip(
     )
 }
 
+/**
+ * Clear audit badge displaying which admin performed a transaction.
+ */
+@Composable
+fun PerformedByPill(
+    name: String,
+    modifier: Modifier = Modifier
+) {
+    val display = name.trim().ifBlank { "System" }
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(6.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Person,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(11.dp)
+            )
+            Text(
+                text = "By: $display",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+/**
+ * Visual 6-color theme swatch selector for per-business branding.
+ */
+@Composable
+fun ThemeColorSwatchPicker(
+    selectedThemeKey: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        AppThemeOption.entries.forEach { theme ->
+            val selected = theme.key.equals(selectedThemeKey, ignoreCase = true)
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { onSelect(theme.key) }
+                    .background(
+                        if (selected) theme.primaryContainerColor.copy(alpha = 0.6f)
+                        else Color.Transparent
+                    )
+                    .border(
+                        width = if (selected) 1.5.dp else 1.dp,
+                        color = if (selected) theme.primaryColor else MaterialTheme.colorScheme.outlineVariant,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                    .testTag("theme_swatch_${theme.key.lowercase()}")
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(theme.primaryColor),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (selected) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = "Selected theme",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = theme.label.substringBefore(" "),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (selected) theme.primaryColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Interactive chip editor allowing a business owner to add or remove categories / payment methods.
+ */
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+@Composable
+fun EditableTagListEditor(
+    title: String,
+    placeholder: String,
+    items: List<String>,
+    onItemsChange: (List<String>) -> Unit,
+    testTagPrefix: String,
+    modifier: Modifier = Modifier
+) {
+    var draftText by remember { mutableStateOf("") }
+
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "$title (${items.size})",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                items.forEach { item ->
+                    InputChip(
+                        selected = false,
+                        onClick = {
+                            if (items.size > 1) {
+                                onItemsChange(items.filterNot { it == item })
+                            }
+                        },
+                        label = {
+                            Text(
+                                text = item,
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        },
+                        trailingIcon = if (items.size > 1) {
+                            {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Remove $item",
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        } else null
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = draftText,
+                    onValueChange = { draftText = it },
+                    placeholder = { Text(placeholder, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    singleLine = true,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("${testTagPrefix}_input")
+                )
+                Button(
+                    onClick = {
+                        val cleaned = draftText.trim()
+                        if (cleaned.isNotEmpty() && items.none { it.equals(cleaned, ignoreCase = true) }) {
+                            onItemsChange(items + cleaned)
+                            draftText = ""
+                        }
+                    },
+                    enabled = draftText.trim().isNotEmpty(),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                    modifier = Modifier
+                        .height(48.dp)
+                        .testTag("${testTagPrefix}_add_btn")
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Add", modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Add", maxLines = 1, softWrap = false)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun BusinessLogoAvatar(
     business: BusinessEntity,
@@ -302,14 +517,23 @@ fun BusinessLogoAvatar(
 ) {
     val logoPath = business.logoFilePath
     val hasCustomLogo = !logoPath.isNullOrBlank() && File(logoPath).exists()
+    val theme = AppThemeOption.fromKey(business.themeKey)
+    val initials = remember(business.name) {
+        business.name.trim()
+            .split(Regex("\\s+"))
+            .mapNotNull { it.firstOrNull()?.uppercaseChar() }
+            .joinToString("")
+            .take(2)
+            .ifBlank { "BM" }
+    }
 
     Surface(
         modifier = modifier
             .size(size)
             .clip(CircleShape),
         shape = CircleShape,
-        color = Color.White,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        color = if (hasCustomLogo) Color.White else theme.primaryColor,
+        border = BorderStroke(1.dp, if (hasCustomLogo) MaterialTheme.colorScheme.outlineVariant else theme.primaryColor)
     ) {
         if (hasCustomLogo) {
             AsyncImage(
@@ -319,12 +543,19 @@ fun BusinessLogoAvatar(
                 modifier = Modifier.size(size)
             )
         } else {
-            Image(
-                painter = painterResource(id = R.drawable.img_hassan_agro_crest_1795112944140),
-                contentDescription = stringResource(R.string.cd_brand_logo),
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.size(size)
-            )
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = initials,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = (size.value * 0.38f).sp,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
         }
     }
 }
@@ -361,7 +592,7 @@ fun BusinessSwitcherPill(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = if (businessCount > 1) "$businessCount businesses" else "Switch / Add",
+                    text = if (businessCount > 1) "$businessCount businesses" else "Switch / Customize",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
                     maxLines = 1,
@@ -516,14 +747,14 @@ fun EmptyStateCard(
                 text = title,
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                textAlign = TextAlign.Center
             )
             Spacer(Modifier.height(6.dp))
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                textAlign = TextAlign.Center
             )
             if (actionLabel != null && onAction != null) {
                 Spacer(Modifier.height(16.dp))
@@ -545,6 +776,7 @@ fun EmptyStateCard(
 fun BusinessSwitcherSheet(
     businesses: List<BusinessEntity>,
     activeBusiness: BusinessEntity,
+    canManageBusinesses: Boolean,
     onSelectBusiness: (String) -> Unit,
     onAddNewBusiness: () -> Unit,
     onManageBusinesses: () -> Unit,
@@ -569,7 +801,7 @@ fun BusinessSwitcherSheet(
                 color = MaterialTheme.colorScheme.onSurface
             )
             Text(
-                text = "Each business keeps separate stock, POS sales, expenses & logo.",
+                text = "Each business has its own theme colors, categories, stock, POS & ledger.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -577,6 +809,7 @@ fun BusinessSwitcherSheet(
 
             businesses.forEach { biz ->
                 val isSelected = biz.id == activeBusiness.id
+                val bizTheme = AppThemeOption.fromKey(biz.themeKey)
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -587,11 +820,11 @@ fun BusinessSwitcherSheet(
                             onDismiss()
                         },
                     shape = MaterialTheme.shapes.medium,
-                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                    color = if (isSelected) bizTheme.primaryContainerColor.copy(alpha = 0.55f)
                     else MaterialTheme.colorScheme.surface,
                     border = BorderStroke(
                         width = if (isSelected) 1.5.dp else 1.dp,
-                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                        color = if (isSelected) bizTheme.primaryColor else MaterialTheme.colorScheme.outlineVariant
                     )
                 ) {
                     Row(
@@ -611,7 +844,7 @@ fun BusinessSwitcherSheet(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = biz.tagline.ifBlank { "Prefix: ${biz.invoicePrefix}" },
+                                text = "${bizTheme.label} • ${biz.tagline.ifBlank { biz.invoicePrefix }}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -622,46 +855,48 @@ fun BusinessSwitcherSheet(
                             Icon(
                                 imageVector = Icons.Default.CheckCircle,
                                 contentDescription = "Active business",
-                                tint = MaterialTheme.colorScheme.primary
+                                tint = bizTheme.primaryColor
                             )
                         }
                     }
                 }
             }
 
-            Spacer(Modifier.height(14.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Spacer(Modifier.height(14.dp))
+            if (canManageBusinesses) {
+                Spacer(Modifier.height(14.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Spacer(Modifier.height(14.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Button(
-                    onClick = {
-                        onDismiss()
-                        onAddNewBusiness()
-                    },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("sheet_add_business_button")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Add Business", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-                }
-                OutlinedButton(
-                    onClick = {
-                        onDismiss()
-                        onManageBusinesses()
-                    },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("sheet_manage_businesses_button")
-                ) {
-                    Icon(Icons.Default.Storefront, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Manage", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                    Button(
+                        onClick = {
+                            onDismiss()
+                            onAddNewBusiness()
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("sheet_add_business_button")
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Add Business", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            onDismiss()
+                            onManageBusinesses()
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("sheet_manage_businesses_button")
+                    ) {
+                        Icon(Icons.Default.Storefront, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Customize", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
         }

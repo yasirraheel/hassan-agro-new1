@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
@@ -45,7 +44,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -58,6 +56,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.R
+import com.example.data.local.AppPermission
 import com.example.data.local.ProductEntity
 import com.example.ui.components.BarcodeScannerDialog
 import com.example.ui.components.BusinessSwitcherPill
@@ -68,8 +67,11 @@ import com.example.ui.screens.BusinessProfileEditorSheet
 import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.ExpensesScreen
 import com.example.ui.screens.InventoryScreen
+import com.example.ui.screens.LoginScreen
 import com.example.ui.screens.ReportsScreen
 import com.example.ui.screens.SettingsScreen
+import com.example.ui.theme.AppThemeOption
+import com.example.ui.theme.HassanAgroTheme
 import com.example.viewmodel.AppViewModel
 import com.example.viewmodel.InventoryFilter
 import kotlinx.coroutines.launch
@@ -90,7 +92,7 @@ private data class TopLevelDestination(
     val unselectedIcon: ImageVector
 )
 
-private val TopLevelDestinations = listOf(
+private val AllTopLevelDestinations = listOf(
     TopLevelDestination(NavRoutes.DASHBOARD, R.string.nav_home, Icons.Filled.Dashboard, Icons.Outlined.Dashboard),
     TopLevelDestination(NavRoutes.INVENTORY, R.string.nav_stock, Icons.Filled.Inventory2, Icons.Outlined.Inventory2),
     TopLevelDestination(NavRoutes.BILLING, R.string.nav_billing, Icons.Filled.PointOfSale, Icons.Outlined.PointOfSale),
@@ -107,12 +109,40 @@ private enum class ScanTarget {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HassanAgroApp(viewModel: AppViewModel = viewModel()) {
+    val authSession by viewModel.authSession.collectAsStateWithLifecycle()
+    val authUiState by viewModel.authUiState.collectAsStateWithLifecycle()
+    val serverConfig by viewModel.serverConfig.collectAsStateWithLifecycle()
+    val activeBusiness by viewModel.activeBusiness.collectAsStateWithLifecycle()
+
+    var signupPreviewThemeKey by remember { mutableStateOf(AppThemeOption.OCEAN.key) }
+    val appliedThemeKey = if (authSession.isLoggedIn) activeBusiness.themeKey else signupPreviewThemeKey
+
+    HassanAgroTheme(themeKey = appliedThemeKey) {
+        if (!authSession.isLoggedIn) {
+            LoginScreen(
+                initialServerUrl = serverConfig.serverBaseUrl,
+                authState = authUiState,
+                selectedPreviewThemeKey = signupPreviewThemeKey,
+                onPreviewThemeChange = { signupPreviewThemeKey = it },
+                onLogin = viewModel::login,
+                onRegister = viewModel::register,
+                onClearError = viewModel::clearAuthError
+            )
+        } else {
+            AuthenticatedBusinessApp(viewModel = viewModel)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = backStackEntry?.destination?.route ?: NavRoutes.DASHBOARD
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
+    val authSession by viewModel.authSession.collectAsStateWithLifecycle()
     val businesses by viewModel.businesses.collectAsStateWithLifecycle()
     val activeBusiness by viewModel.activeBusiness.collectAsStateWithLifecycle()
     val products by viewModel.products.collectAsStateWithLifecycle()
@@ -121,6 +151,10 @@ fun HassanAgroApp(viewModel: AppViewModel = viewModel()) {
     val allProducts by viewModel.allProducts.collectAsStateWithLifecycle()
     val allInvoices by viewModel.allInvoices.collectAsStateWithLifecycle()
     val allExpenses by viewModel.allExpenses.collectAsStateWithLifecycle()
+    val activeMonthlySales by viewModel.activeMonthlySalesTotals.collectAsStateWithLifecycle()
+    val activeMonthlyExpenses by viewModel.activeMonthlyExpenseTotals.collectAsStateWithLifecycle()
+    val allMonthlySales by viewModel.allMonthlySalesTotals.collectAsStateWithLifecycle()
+    val allMonthlyExpenses by viewModel.allMonthlyExpenseTotals.collectAsStateWithLifecycle()
     val serverConfig by viewModel.serverConfig.collectAsStateWithLifecycle()
     val syncState by viewModel.syncUiState.collectAsStateWithLifecycle()
     val pendingSyncCount by viewModel.pendingSyncCount.collectAsStateWithLifecycle()
@@ -128,6 +162,35 @@ fun HassanAgroApp(viewModel: AppViewModel = viewModel()) {
     val billingDraft by viewModel.billingDraft.collectAsStateWithLifecycle()
     val heldCarts by viewModel.heldCarts.collectAsStateWithLifecycle()
     val generatedInvoice by viewModel.generatedInvoice.collectAsStateWithLifecycle()
+
+    val canDashboard = authSession.hasPermission(AppPermission.VIEW_DASHBOARD)
+    val canInventory = authSession.hasPermission(AppPermission.MANAGE_INVENTORY)
+    val canUsePos = authSession.hasPermission(AppPermission.USE_POS)
+    val canCollectCredit = authSession.hasPermission(AppPermission.COLLECT_CREDIT)
+    val canReturnSales = authSession.hasPermission(AppPermission.RETURN_SALES)
+    val canBillingTab = canUsePos || canCollectCredit || canReturnSales
+    val canExpenses = authSession.hasPermission(AppPermission.MANAGE_EXPENSES)
+    val canReports = authSession.hasPermission(AppPermission.VIEW_REPORTS)
+    val canExport = authSession.hasPermission(AppPermission.EXPORT_DATA)
+    val canManageBusinesses = authSession.hasPermission(AppPermission.MANAGE_BUSINESSES)
+    val canManageSettings = authSession.hasPermission(AppPermission.MANAGE_SETTINGS)
+
+    val allowedDestinations = remember(canDashboard, canInventory, canBillingTab, canExpenses, canReports) {
+        val list = AllTopLevelDestinations.filter { dest ->
+            when (dest.route) {
+                NavRoutes.DASHBOARD -> canDashboard
+                NavRoutes.INVENTORY -> canInventory
+                NavRoutes.BILLING -> canBillingTab
+                NavRoutes.EXPENSES -> canExpenses
+                NavRoutes.REPORTS -> canReports
+                else -> true
+            }
+        }
+        list.ifEmpty { listOf(AllTopLevelDestinations.first()) }
+    }
+
+    val startRoute = remember(allowedDestinations) { allowedDestinations.first().route }
+    val currentRoute = backStackEntry?.destination?.route ?: startRoute
 
     var showBusinessSwitcher by remember { mutableStateOf(false) }
     var showQuickAddBusiness by remember { mutableStateOf(false) }
@@ -143,6 +206,10 @@ fun HassanAgroApp(viewModel: AppViewModel = viewModel()) {
     }
 
     fun navigateTopLevel(route: String) {
+        if (allowedDestinations.none { it.route == route }) {
+            viewModel.emitMessage("Your role (${authSession.roleName}) does not have access to this section")
+            return
+        }
         navController.navigate(route) {
             popUpTo(navController.graph.findStartDestination().id) {
                 saveState = true
@@ -154,7 +221,6 @@ fun HassanAgroApp(viewModel: AppViewModel = viewModel()) {
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val useNavigationRail = maxWidth >= 600.dp
-        val isKeyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
 
         Scaffold(
             contentWindowInsets = WindowInsets.safeDrawing,
@@ -202,9 +268,9 @@ fun HassanAgroApp(viewModel: AppViewModel = viewModel()) {
                 }
             },
             bottomBar = {
-                if (!useNavigationRail && currentRoute != NavRoutes.SETTINGS && !isKeyboardVisible) {
+                if (!useNavigationRail && currentRoute != NavRoutes.SETTINGS) {
                     NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                        TopLevelDestinations.forEach { dest ->
+                        allowedDestinations.forEach { dest ->
                             val selected = currentRoute == dest.route
                             val label = stringResource(dest.labelRes)
                             NavigationBarItem(
@@ -234,7 +300,7 @@ fun HassanAgroApp(viewModel: AppViewModel = viewModel()) {
                         containerColor = MaterialTheme.colorScheme.surface,
                         modifier = Modifier.fillMaxHeight()
                     ) {
-                        TopLevelDestinations.forEach { dest ->
+                        allowedDestinations.forEach { dest ->
                             val selected = currentRoute == dest.route
                             val label = stringResource(dest.labelRes)
                             NavigationRailItem(
@@ -256,43 +322,45 @@ fun HassanAgroApp(viewModel: AppViewModel = viewModel()) {
                 Box(modifier = Modifier.weight(1f)) {
                     NavHost(
                         navController = navController,
-                        startDestination = NavRoutes.DASHBOARD
+                        startDestination = startRoute
                     ) {
                         composable(NavRoutes.DASHBOARD) {
                             DashboardScreen(
                                 activeBusiness = activeBusiness,
+                                authSession = authSession,
                                 products = products,
                                 invoices = invoices,
                                 expenses = expenses,
                                 onQuickNewBill = { navigateTopLevel(NavRoutes.BILLING) },
-                                onQuickScanStock = { activeScanTarget = ScanTarget.STOCK_IN },
-                                onQuickAddExpense = {
-                                    autoOpenAddExpense = true
-                                    navigateTopLevel(NavRoutes.EXPENSES)
+                                onQuickScanStock = {
+                                    if (canInventory) activeScanTarget = ScanTarget.STOCK_IN
+                                    else viewModel.emitMessage("Your role cannot modify inventory")
                                 },
-                                onQuickSync = {
-                                    if (serverConfig.isConfigured) {
-                                        viewModel.syncNow()
+                                onQuickAddExpense = {
+                                    if (canExpenses) {
+                                        autoOpenAddExpense = true
+                                        navigateTopLevel(NavRoutes.EXPENSES)
                                     } else {
-                                        viewModel.emitMessage("Connect your custom server in Settings to sync")
-                                        navController.navigate(NavRoutes.SETTINGS)
+                                        viewModel.emitMessage("Your role cannot manage expenses")
                                     }
                                 },
+                                onQuickSync = { viewModel.syncNow() },
                                 onOpenInventoryWithFilter = { filter ->
-                                    viewModel.setInventoryFilter(filter)
-                                    navigateTopLevel(NavRoutes.INVENTORY)
+                                    if (canInventory) {
+                                        viewModel.setInventoryFilter(filter)
+                                        navigateTopLevel(NavRoutes.INVENTORY)
+                                    }
                                 },
                                 onOpenInvoice = { entry ->
                                     viewModel.openExistingInvoicePdf(entry)
-                                    navigateTopLevel(NavRoutes.BILLING)
+                                    if (canBillingTab) navigateTopLevel(NavRoutes.BILLING)
                                 }
                             )
                         }
 
                         composable(NavRoutes.INVENTORY) {
                             InventoryScreen(
-                                businessId = activeBusiness.id,
-                                businessName = activeBusiness.name,
+                                activeBusiness = activeBusiness,
                                 products = products,
                                 activeFilter = inventoryFilter,
                                 onFilterChange = viewModel::setInventoryFilter,
@@ -311,12 +379,15 @@ fun HassanAgroApp(viewModel: AppViewModel = viewModel()) {
 
                         composable(NavRoutes.BILLING) {
                             BillingScreen(
-                                businessName = activeBusiness.name,
+                                activeBusiness = activeBusiness,
                                 products = products,
                                 invoices = invoices,
                                 draft = billingDraft,
                                 heldCarts = heldCarts,
                                 generatedInvoice = generatedInvoice,
+                                canCreateSale = canUsePos,
+                                canCollectCredit = canCollectCredit,
+                                canReturnSale = canReturnSales,
                                 onUpdateCustomer = viewModel::updateBillingCustomer,
                                 onSelectTier = viewModel::updateBillingTier,
                                 onUpdateTax = viewModel::updateBillingTax,
@@ -342,8 +413,7 @@ fun HassanAgroApp(viewModel: AppViewModel = viewModel()) {
 
                         composable(NavRoutes.EXPENSES) {
                             ExpensesScreen(
-                                businessId = activeBusiness.id,
-                                businessName = activeBusiness.name,
+                                activeBusiness = activeBusiness,
                                 expenses = expenses,
                                 autoOpenAdd = autoOpenAddExpense,
                                 onConsumeAutoOpenAdd = { autoOpenAddExpense = false },
@@ -362,6 +432,11 @@ fun HassanAgroApp(viewModel: AppViewModel = viewModel()) {
                                 allProducts = allProducts,
                                 allInvoices = allInvoices,
                                 allExpenses = allExpenses,
+                                activeMonthlySalesRows = activeMonthlySales,
+                                activeMonthlyExpenseRows = activeMonthlyExpenses,
+                                allMonthlySalesRows = allMonthlySales,
+                                allMonthlyExpenseRows = allMonthlyExpenses,
+                                canExportData = canExport,
                                 onGenerateReportPdf = viewModel::generateMonthlyReportPdf,
                                 onExportCsv = viewModel::exportCsvToCache,
                                 onNotify = viewModel::emitMessage
@@ -370,18 +445,22 @@ fun HassanAgroApp(viewModel: AppViewModel = viewModel()) {
 
                         composable(NavRoutes.SETTINGS) {
                             SettingsScreen(
+                                authSession = authSession,
                                 businesses = businesses,
                                 activeBusiness = activeBusiness,
                                 serverConfig = serverConfig,
                                 syncState = syncState,
                                 pendingSyncCount = pendingSyncCount,
+                                canManageBusinesses = canManageBusinesses,
+                                canManageSettings = canManageSettings,
                                 onSwitchBusiness = viewModel::switchBusiness,
                                 onSaveBusiness = viewModel::saveBusiness,
                                 onDeleteBusiness = viewModel::deleteBusiness,
                                 onUpdateBusinessLogo = viewModel::updateBusinessLogo,
                                 onSaveServerConfig = viewModel::saveServerConfig,
                                 onTestServerConnection = viewModel::testServerConnection,
-                                onSaveAndSync = viewModel::saveAndSyncServerConfig,
+                                onSyncNow = { viewModel.syncNow(silent = false) },
+                                onSignOut = viewModel::logout,
                                 onBack = { navController.popBackStack() }
                             )
                         }
@@ -395,6 +474,7 @@ fun HassanAgroApp(viewModel: AppViewModel = viewModel()) {
         BusinessSwitcherSheet(
             businesses = businesses,
             activeBusiness = activeBusiness,
+            canManageBusinesses = canManageBusinesses,
             onSelectBusiness = viewModel::switchBusiness,
             onAddNewBusiness = { showQuickAddBusiness = true },
             onManageBusinesses = { navController.navigate(NavRoutes.SETTINGS) },
@@ -416,7 +496,7 @@ fun HassanAgroApp(viewModel: AppViewModel = viewModel()) {
     if (activeScanTarget != ScanTarget.NONE) {
         val target = activeScanTarget
         BarcodeScannerDialog(
-            title = if (target == ScanTarget.STOCK_IN) "Scan Pesticide Stock In" else "Scan Product to Bill",
+            title = if (target == ScanTarget.STOCK_IN) "Scan Product Stock In" else "Scan Product to Bill",
             onBarcodeScanned = { scannedCode ->
                 activeScanTarget = ScanTarget.NONE
                 scope.launch {

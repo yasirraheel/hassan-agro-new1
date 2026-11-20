@@ -1,7 +1,7 @@
 <resources>
-    <string name="app_name">Hassan Agro</string>
-    <string name="default_business_name">Hassan Agro</string>
-    <string name="default_business_tagline">Crop Protection &amp; Agri Inputs</string>
+    <string name="app_name">Business Manager</string>
+    <string name="default_business_name">My Business</string>
+    <string name="default_business_tagline">Retail &amp; Wholesale Management</string>
     <string name="nav_home">Home</string>
     <string name="nav_stock">Stock</string>
     <string name="nav_billing">POS</string>
@@ -22,5 +22,5 @@
     <string name="cd_share_pdf">Share PDF document</string>
     <string name="cd_previous_month">Previous month</string>
     <string name="cd_next_month">Next month</string>
-    <string name="camera_permission_rationale">Camera access is required to scan pesticide product barcodes and QR codes. You can also enter barcodes manually below.</string>
+    <string name="camera_permission_rationale">Camera access is required to scan product barcodes and QR codes. You can also enter barcodes manually below.</string>
 </resources>

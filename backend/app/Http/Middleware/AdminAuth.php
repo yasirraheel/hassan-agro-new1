@@ -10,7 +10,7 @@ class AdminAuth
 {
     public function handle(Request $request, Closure $next): Response
     {
-        if (!$request->session()->get('hassan_agro_admin_logged_in', false)) {
+        if (!$request->session()->get('bm_admin_logged_in', false)) {
             return redirect()->route('admin.login');
         }
 

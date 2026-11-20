@@ -1,10 +1,10 @@
 @extends('admin.layout')
-@section('title', 'Businesses')
+@section('title', 'Businesses & Themes')
 
 @section('content')
 <div class="toolbar" style="justify-content:space-between;">
     <div style="color:var(--muted); font-size:13.5px;">
-        Add or edit businesses here — all Android devices pull updates automatically within 30 seconds.
+        Each business has its own custom <strong>Color Theme</strong>, <strong>Business Type</strong>, <strong>Product/Expense Categories</strong>, and <strong>Expiry/Batch Tracking</strong>.
     </div>
     <button type="button" class="btn btn-primary" onclick="openBusinessModal()">+ Add Business</button>
 </div>
@@ -14,9 +14,9 @@
         <table>
             <thead>
                 <tr>
-                    <th>Business Name</th>
-                    <th>Contact &amp; NTN</th>
-                    <th>Invoice Prefix / Tax</th>
+                    <th>Business &amp; Type</th>
+                    <th>Theme</th>
+                    <th>Features / Currency</th>
                     <th>SKUs</th>
                     <th>Sales</th>
                     <th>Expenses</th>
@@ -27,28 +27,35 @@
                 @forelse($businesses as $b)
                     @php
                         $invStat = $invoiceCounts[$b->id] ?? null;
+                        $tKey = strtoupper((string)($b->theme_key ?? 'OCEAN'));
+                        $tInfo = $themes[$tKey] ?? ['label' => $tKey, 'primary' => '#0D47A1'];
+                        $bObj = (array) $b;
+                        $bObj['product_categories_csv'] = implode(', ', json_decode((string)($b->product_categories_json ?? ''), true) ?: []);
+                        $bObj['expense_categories_csv'] = implode(', ', json_decode((string)($b->expense_categories_json ?? ''), true) ?: []);
+                        $bObj['payment_methods_csv'] = implode(', ', json_decode((string)($b->payment_methods_json ?? ''), true) ?: []);
                     @endphp
                     <tr>
                         <td>
                             <strong>{{ $b->name }}</strong>
-                            @if($b->tagline)
-                                <div style="font-size:12px; color:var(--muted);">{{ $b->tagline }}</div>
-                            @endif
+                            <div style="font-size:12px; color:var(--muted);">
+                                {{ $b->business_type ?? 'GENERAL' }} · Prefix: {{ $b->invoice_prefix }} · {{ number_format($b->default_tax_rate, 1) }}% Tax
+                            </div>
                         </td>
                         <td>
-                            <div>{{ $b->phone ?: '—' }}</div>
-                            <div style="font-size:12px; color:var(--muted);">{{ $b->tax_id ? "NTN/GST: {$b->tax_id}" : ($b->email ?: '') }}</div>
+                            <span class="swatch" style="background:{{ $tInfo['primary'] }};"></span>
+                            <strong>{{ $tInfo['label'] }}</strong>
                         </td>
                         <td>
-                            <span class="badge badge-green">{{ $b->invoice_prefix }}</span>
-                            <span class="badge badge-blue">{{ number_format($b->default_tax_rate, 1) }}% Tax</span>
+                            <span class="badge badge-blue">{{ $b->currency_symbol ?? 'Rs.' }}</span>
+                            @if($b->track_expiry ?? true)<span class="badge badge-amber">Expiry ON</span>@endif
+                            @if($b->track_batch ?? true)<span class="badge badge-gray">{{ $b->batch_field_label ?? 'Batch' }}</span>@endif
                         </td>
                         <td class="num">{{ $productCounts[$b->id] ?? 0 }}</td>
-                        <td class="num">Rs. {{ number_format((float)($invStat->rev ?? 0), 0) }}</td>
-                        <td class="num">Rs. {{ number_format((float)($expenseSums[$b->id] ?? 0), 0) }}</td>
+                        <td class="num">{{ $b->currency_symbol ?? 'Rs.' }} {{ number_format((float)($invStat->rev ?? 0), 0) }}</td>
+                        <td class="num">{{ $b->currency_symbol ?? 'Rs.' }} {{ number_format((float)($expenseSums[$b->id] ?? 0), 0) }}</td>
                         <td style="text-align:right; white-space:nowrap;">
-                            <button type="button" class="btn btn-sm" onclick='openBusinessModal(@json($b))'>Edit</button>
-                            <form method="POST" action="{{ route('admin.businesses.delete', $b->id) }}" style="display:inline;" onsubmit="return confirm('Remove {{ addslashes($b->name) }} and sync deletion to phones?')">
+                            <button type="button" class="btn btn-sm" onclick='openBusinessModal(@json($bObj))'>Customize / Edit</button>
+                            <form method="POST" action="{{ route('admin.businesses.delete', $b->id) }}" style="display:inline;" onsubmit="return confirm('Remove {{ addslashes($b->name) }}?')">
                                 @csrf
                                 @method('DELETE')
                                 <button type="submit" class="btn btn-sm btn-danger">Delete</button>
@@ -56,7 +63,7 @@
                         </td>
                     </tr>
                 @empty
-                    <tr><td colspan="7" style="text-align:center; color:var(--muted); padding:28px;">No businesses yet. Click "+ Add Business" or sync from your Android app.</td></tr>
+                    <tr><td colspan="7" style="text-align:center; color:var(--muted); padding:28px;">No businesses yet.</td></tr>
                 @endforelse
             </tbody>
         </table>
@@ -66,7 +73,7 @@
 <div class="modal-backdrop" id="businessModal">
     <div class="modal">
         <div class="card-header">
-            <h2 class="card-title" id="bizModalTitle">Add Business</h2>
+            <h2 class="card-title" id="bizModalTitle">Add &amp; Customize Business</h2>
             <button type="button" class="btn btn-sm" onclick="closeModal('businessModal')">✕</button>
         </div>
         <form id="bizForm" method="POST" action="{{ route('admin.businesses.store') }}">
@@ -75,11 +82,35 @@
             <div class="form-grid">
                 <div class="field form-full">
                     <label>Business Name *</label>
-                    <input class="input" name="name" id="biz_name" required placeholder="e.g. Hassan Agro">
+                    <input class="input" name="name" id="biz_name" required placeholder="e.g. City Mart / Hassan Agro / Tech Point">
                 </div>
-                <div class="field form-full">
-                    <label>Tagline</label>
-                    <input class="input" name="tagline" id="biz_tagline" placeholder="e.g. Crop Protection & Agri Solutions">
+                <div class="field">
+                    <label>Business Type Preset</label>
+                    <select name="business_type" id="biz_type" onchange="applyPreset(this.value)">
+                        @foreach($presets as $key => $preset)
+                            <option value="{{ $key }}">{{ $preset['label'] }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                <div class="field">
+                    <label>App Color Theme *</label>
+                    <select name="theme_key" id="biz_theme" required>
+                        @foreach($themes as $tKey => $tInfo)
+                            <option value="{{ $tKey }}">{{ $tInfo['label'] }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                <div class="field">
+                    <label>Currency Symbol</label>
+                    <input class="input" name="currency_symbol" id="biz_currency" value="Rs." maxlength="12">
+                </div>
+                <div class="field">
+                    <label>Invoice Prefix</label>
+                    <input class="input" name="invoice_prefix" id="biz_prefix" value="BM" maxlength="16">
+                </div>
+                <div class="field">
+                    <label>Default Tax / GST (%)</label>
+                    <input class="input" type="number" step="0.01" min="0" max="100" name="default_tax_rate" id="biz_tax" value="0">
                 </div>
                 <div class="field">
                     <label>Phone</label>
@@ -87,27 +118,51 @@
                 </div>
                 <div class="field">
                     <label>Email</label>
-                    <input class="input" name="email" id="biz_email" placeholder="info@hassanagro.com">
+                    <input class="input" name="email" id="biz_email" placeholder="owner@business.com">
                 </div>
                 <div class="field">
-                    <label>Invoice Prefix</label>
-                    <input class="input" name="invoice_prefix" id="biz_prefix" value="HA" maxlength="16">
-                </div>
-                <div class="field">
-                    <label>Default Tax / GST (%)</label>
-                    <input class="input" type="number" step="0.01" min="0" max="100" name="default_tax_rate" id="biz_tax" value="0">
+                    <label>NTN / Tax ID</label>
+                    <input class="input" name="tax_id" id="biz_tax_id">
                 </div>
                 <div class="field form-full">
-                    <label>NTN / Tax ID</label>
-                    <input class="input" name="tax_id" id="biz_tax_id" placeholder="Optional NTN / STRN">
+                    <label>Tagline</label>
+                    <input class="input" name="tagline" id="biz_tagline">
+                </div>
+                <div class="field">
+                    <label>Batch / Serial Field Label</label>
+                    <input class="input" name="batch_field_label" id="biz_batch_label" value="Batch No.">
+                </div>
+                <div class="field">
+                    <label>Unit / Pack Field Label</label>
+                    <input class="input" name="pack_size_label" id="biz_pack_label" value="Pack / Size">
+                </div>
+                <div class="field form-full" style="display:flex; gap:16px; flex-wrap:wrap; padding-top:4px;">
+                    <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:13px; color:var(--text);">
+                        <input type="checkbox" name="track_expiry" id="biz_track_expiry" value="1" checked> Track Expiry Dates &amp; Alerts
+                    </label>
+                    <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:13px; color:var(--text);">
+                        <input type="checkbox" name="track_batch" id="biz_track_batch" value="1" checked> Track Batch / Serial Number
+                    </label>
+                </div>
+                <div class="field form-full">
+                    <label>Product Categories (comma-separated — add, edit, or delete freely)</label>
+                    <textarea name="product_categories_csv" id="biz_prod_cats" rows="2"></textarea>
+                </div>
+                <div class="field form-full">
+                    <label>Expense Categories (comma-separated)</label>
+                    <textarea name="expense_categories_csv" id="biz_exp_cats" rows="2"></textarea>
+                </div>
+                <div class="field form-full">
+                    <label>Payment Methods (comma-separated)</label>
+                    <input class="input" name="payment_methods_csv" id="biz_pay_methods">
                 </div>
                 <div class="field form-full">
                     <label>Address</label>
-                    <input class="input" name="address" id="biz_address" placeholder="Shop / Office Address">
+                    <input class="input" name="address" id="biz_address">
                 </div>
                 <div class="field form-full">
                     <label>Invoice Footer Note</label>
-                    <input class="input" name="invoice_footer" id="biz_footer" placeholder="Thank you for your business!">
+                    <input class="input" name="invoice_footer" id="biz_footer">
                 </div>
             </div>
             <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
@@ -123,30 +178,57 @@
 <script>
 const bizStoreUrl = "{{ route('admin.businesses.store') }}";
 const bizBaseUrl = "{{ url('/admin/businesses') }}";
+const presetsMap = @json($presets);
+
+function applyPreset(typeKey) {
+    const p = presetsMap[typeKey];
+    if (!p) return;
+    document.getElementById('biz_theme').value = p.default_theme || 'OCEAN';
+    document.getElementById('biz_tagline').value = p.tagline || '';
+    document.getElementById('biz_track_expiry').checked = !!p.track_expiry;
+    document.getElementById('biz_track_batch').checked = !!p.track_batch;
+    document.getElementById('biz_batch_label').value = p.batch_field_label || 'Batch No.';
+    document.getElementById('biz_pack_label').value = p.pack_size_label || 'Pack / Size';
+    document.getElementById('biz_prod_cats').value = (p.product_categories || []).join(', ');
+    document.getElementById('biz_exp_cats').value = (p.expense_categories || []).join(', ');
+    document.getElementById('biz_pay_methods').value = (p.payment_methods || []).join(', ');
+}
 
 function openBusinessModal(biz = null) {
     const form = document.getElementById('bizForm');
     const method = document.getElementById('bizMethod');
     if (biz) {
-        document.getElementById('bizModalTitle').textContent = 'Edit Business';
+        document.getElementById('bizModalTitle').textContent = 'Customize Business';
         form.action = bizBaseUrl + '/' + biz.id;
         method.value = 'PUT';
         document.getElementById('biz_name').value = biz.name || '';
-        document.getElementById('biz_tagline').value = biz.tagline || '';
+        document.getElementById('biz_type').value = biz.business_type || 'GENERAL';
+        document.getElementById('biz_theme').value = (biz.theme_key || 'OCEAN').toUpperCase();
+        document.getElementById('biz_currency').value = biz.currency_symbol || 'Rs.';
+        document.getElementById('biz_prefix').value = biz.invoice_prefix || 'BM';
+        document.getElementById('biz_tax').value = biz.default_tax_rate ?? 0;
         document.getElementById('biz_phone').value = biz.phone || '';
         document.getElementById('biz_email').value = biz.email || '';
-        document.getElementById('biz_prefix').value = biz.invoice_prefix || 'HA';
-        document.getElementById('biz_tax').value = biz.default_tax_rate ?? 0;
         document.getElementById('biz_tax_id').value = biz.tax_id || '';
+        document.getElementById('biz_tagline').value = biz.tagline || '';
+        document.getElementById('biz_batch_label').value = biz.batch_field_label || 'Batch No.';
+        document.getElementById('biz_pack_label').value = biz.pack_size_label || 'Pack / Size';
+        document.getElementById('biz_track_expiry').checked = biz.track_expiry == null ? true : !!Number(biz.track_expiry);
+        document.getElementById('biz_track_batch').checked = biz.track_batch == null ? true : !!Number(biz.track_batch);
+        document.getElementById('biz_prod_cats').value = biz.product_categories_csv || '';
+        document.getElementById('biz_exp_cats').value = biz.expense_categories_csv || '';
+        document.getElementById('biz_pay_methods').value = biz.payment_methods_csv || '';
         document.getElementById('biz_address').value = biz.address || '';
         document.getElementById('biz_footer').value = biz.invoice_footer || '';
     } else {
-        document.getElementById('bizModalTitle').textContent = 'Add Business';
+        document.getElementById('bizModalTitle').textContent = 'Add & Customize Business';
         form.action = bizStoreUrl;
         method.value = 'POST';
         form.reset();
-        document.getElementById('biz_prefix').value = 'HA';
-        document.getElementById('biz_tax').value = '0';
+        document.getElementById('biz_type').value = 'GENERAL';
+        document.getElementById('biz_currency').value = 'Rs.';
+        document.getElementById('biz_prefix').value = 'BM';
+        applyPreset('GENERAL');
     }
     openModal('businessModal');
 }

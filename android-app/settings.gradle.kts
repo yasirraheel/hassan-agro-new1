@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Hassan Agro"
+rootProject.name = "Business Manager"
 
 include(":app")

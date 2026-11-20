@@ -20,6 +20,18 @@ interface CustomServerApi {
     @GET("api/v1/health")
     suspend fun health(): HealthResponse
 
+    @POST("api/v1/auth/login")
+    suspend fun login(@Body request: LoginRequest): retrofit2.Response<AuthResponse>
+
+    @POST("api/v1/auth/register")
+    suspend fun register(@Body request: RegisterRequest): retrofit2.Response<AuthResponse>
+
+    @GET("api/v1/auth/me")
+    suspend fun me(): retrofit2.Response<MeResponse>
+
+    @POST("api/v1/auth/logout")
+    suspend fun logout(): LogoutResponse
+
     @POST("api/v1/sync/push")
     suspend fun pushSync(@Body request: SyncPushRequest): SyncPushResponse
 

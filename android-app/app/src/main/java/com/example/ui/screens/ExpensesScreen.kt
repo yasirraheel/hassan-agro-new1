@@ -53,13 +53,13 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
-import com.example.data.local.ExpenseCategory
+import com.example.data.local.BusinessEntity
 import com.example.data.local.ExpenseEntity
-import com.example.data.local.PaymentMethod
 import com.example.ui.components.AgriFilterChip
 import com.example.ui.components.AppDatePickerDialog
 import com.example.ui.components.EmptyStateCard
 import com.example.ui.components.FormScreenDialog
+import com.example.ui.components.PerformedByPill
 import com.example.ui.theme.ExpiredCrimson
 import com.example.ui.theme.MonoFigureLarge
 import com.example.ui.theme.MonoFigureMedium
@@ -68,8 +68,7 @@ import java.util.Calendar
 
 @Composable
 fun ExpensesScreen(
-    businessId: String,
-    businessName: String,
+    activeBusiness: BusinessEntity,
     expenses: List<ExpenseEntity>,
     autoOpenAdd: Boolean,
     onConsumeAutoOpenAdd: () -> Unit,
@@ -77,6 +76,11 @@ fun ExpensesScreen(
     onDeleteExpense: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val currency = activeBusiness.resolvedCurrency()
+    val customCategories = remember(activeBusiness.expenseCategoriesJson, activeBusiness.businessType) {
+        activeBusiness.expenseCategories()
+    }
+
     val initCal = remember { Calendar.getInstance() }
     var selectedYear by remember { mutableIntStateOf(initCal.get(Calendar.YEAR)) }
     var selectedMonth by remember { mutableIntStateOf(initCal.get(Calendar.MONTH)) }
@@ -100,7 +104,7 @@ fun ExpensesScreen(
     }
     val filteredExpenses = remember(monthlyExpenses, selectedCategory) {
         if (selectedCategory == null) monthlyExpenses
-        else monthlyExpenses.filter { it.category == selectedCategory }
+        else monthlyExpenses.filter { it.category.equals(selectedCategory, ignoreCase = true) }
     }
     val monthlyTotal = remember(monthlyExpenses) { monthlyExpenses.sumOf { it.amount } }
 
@@ -110,7 +114,6 @@ fun ExpensesScreen(
                 .fillMaxSize()
                 .widthIn(max = 760.dp)
         ) {
-            // Month Navigator + Monthly Spend Summary
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -179,7 +182,7 @@ fun ExpensesScreen(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = Formatters.formatPkr(monthlyTotal),
+                            text = Formatters.formatPkr(monthlyTotal, currency),
                             style = MonoFigureLarge,
                             color = ExpiredCrimson,
                             maxLines = 1
@@ -188,7 +191,7 @@ fun ExpensesScreen(
                 }
             }
 
-            // Category Filter Chips
+            // Dynamic Per-Business Expense Category Chips
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -201,11 +204,11 @@ fun ExpensesScreen(
                     onClick = { selectedCategory = null },
                     label = "All"
                 )
-                ExpenseCategory.entries.forEach { cat ->
+                customCategories.forEach { cat ->
                     AgriFilterChip(
-                        selected = selectedCategory == cat.label,
-                        onClick = { selectedCategory = if (selectedCategory == cat.label) null else cat.label },
-                        label = cat.label
+                        selected = selectedCategory == cat,
+                        onClick = { selectedCategory = if (selectedCategory == cat) null else cat },
+                        label = cat
                     )
                 }
             }
@@ -217,7 +220,7 @@ fun ExpensesScreen(
                     EmptyStateCard(
                         icon = Icons.Default.Payments,
                         title = "No expenses in ${Formatters.formatMonthYear(selectedYear, selectedMonth)}",
-                        subtitle = "Log shop rent, transport, stock purchases, utilities, or staff salaries for $businessName to track real monthly profit.",
+                        subtitle = "Log rent, stock purchases, utilities, transport, or staff salaries for ${activeBusiness.name} to track real monthly profit.",
                         actionLabel = "Add Expense",
                         onAction = { showAddSheet = true },
                         actionTestTag = "expenses_empty_add_btn"
@@ -243,14 +246,13 @@ fun ExpensesScreen(
                                     .padding(14.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                     Text(
                                         text = expense.title,
                                         style = MaterialTheme.typography.titleMedium,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
-                                    Spacer(Modifier.height(3.dp))
                                     Row(
                                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                                         verticalAlignment = Alignment.CenterVertically
@@ -285,11 +287,12 @@ fun ExpensesScreen(
                                             overflow = TextOverflow.Ellipsis
                                         )
                                     }
+                                    PerformedByPill(name = expense.performedByName)
                                 }
                                 Spacer(Modifier.width(8.dp))
                                 Column(horizontalAlignment = Alignment.End) {
                                     Text(
-                                        text = Formatters.formatPkr(expense.amount),
+                                        text = Formatters.formatPkr(expense.amount, currency),
                                         style = MonoFigureMedium,
                                         color = ExpiredCrimson,
                                         maxLines = 1,
@@ -329,7 +332,7 @@ fun ExpensesScreen(
 
     if (showAddSheet || editingExpense != null) {
         ExpenseEditorDialog(
-            businessId = businessId,
+            business = activeBusiness,
             existing = editingExpense,
             onSave = {
                 onSaveExpense(it)
@@ -346,15 +349,19 @@ fun ExpensesScreen(
 
 @Composable
 private fun ExpenseEditorDialog(
-    businessId: String,
+    business: BusinessEntity,
     existing: ExpenseEntity?,
     onSave: (ExpenseEntity) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val currency = business.resolvedCurrency()
+    val categories = remember(business.expenseCategoriesJson, business.businessType) { business.expenseCategories() }
+    val paymentMethods = remember(business.paymentMethodsJson, business.businessType) { business.paymentMethods() }
+
     var title by remember { mutableStateOf(existing?.title ?: "") }
     var amountText by remember { mutableStateOf(existing?.amount?.toString() ?: "") }
-    var category by remember { mutableStateOf(existing?.category ?: ExpenseCategory.STOCK_PURCHASE.label) }
-    var paymentMethod by remember { mutableStateOf(existing?.paymentMethod ?: PaymentMethod.CASH.label) }
+    var category by remember { mutableStateOf(existing?.category ?: categories.firstOrNull() ?: "Other") }
+    var paymentMethod by remember { mutableStateOf(existing?.paymentMethod ?: paymentMethods.firstOrNull() ?: "Cash") }
     var payee by remember { mutableStateOf(existing?.payee ?: "") }
     var notes by remember { mutableStateOf(existing?.notes ?: "") }
     var dateMillis by remember { mutableLongStateOf(existing?.expenseDateMillis ?: System.currentTimeMillis()) }
@@ -363,7 +370,7 @@ private fun ExpenseEditorDialog(
 
     FormScreenDialog(
         title = if (existing == null) "Record Business Expense" else "Edit Expense",
-        subtitle = "Scroll freely — closes only when you tap X or Save",
+        subtitle = business.name,
         onDismiss = onDismiss,
         bottomBar = {
             Button(
@@ -374,11 +381,11 @@ private fun ExpenseEditorDialog(
                         return@Button
                     }
                     val entity = (existing ?: ExpenseEntity(
-                        businessId = businessId,
+                        businessId = business.id,
                         title = title.trim(),
                         amount = amt
                     )).copy(
-                        businessId = businessId,
+                        businessId = business.id,
                         title = title.trim(),
                         category = category,
                         amount = amt,
@@ -402,7 +409,7 @@ private fun ExpenseEditorDialog(
             value = title,
             onValueChange = { title = it; errorMsg = null },
             label = { Text("Expense Title *", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            placeholder = { Text("e.g. Pesticide Shipment Freight", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            placeholder = { Text("e.g. Monthly Rent or Stock Freight", maxLines = 1, overflow = TextOverflow.Ellipsis) },
             singleLine = true,
             modifier = Modifier
                 .fillMaxWidth()
@@ -411,7 +418,7 @@ private fun ExpenseEditorDialog(
         OutlinedTextField(
             value = amountText,
             onValueChange = { amountText = it; errorMsg = null },
-            label = { Text("Amount (Rs.) *", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            label = { Text("Amount ($currency) *", maxLines = 1, overflow = TextOverflow.Ellipsis) },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             singleLine = true,
             modifier = Modifier
@@ -424,11 +431,11 @@ private fun ExpenseEditorDialog(
             modifier = Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            ExpenseCategory.entries.forEach { cat ->
+            categories.forEach { cat ->
                 AgriFilterChip(
-                    selected = category == cat.label,
-                    onClick = { category = cat.label },
-                    label = cat.label
+                    selected = category == cat,
+                    onClick = { category = cat },
+                    label = cat
                 )
             }
         }
@@ -438,11 +445,11 @@ private fun ExpenseEditorDialog(
             modifier = Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            PaymentMethod.entries.forEach { method ->
+            paymentMethods.forEach { method ->
                 AgriFilterChip(
-                    selected = paymentMethod == method.label,
-                    onClick = { paymentMethod = method.label },
-                    label = method.label
+                    selected = paymentMethod == method,
+                    onClick = { paymentMethod = method },
+                    label = method
                 )
             }
         }

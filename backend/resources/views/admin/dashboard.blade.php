@@ -11,15 +11,15 @@
     <div class="card">
         <div class="kpi-label">Total Expenses</div>
         <div class="kpi-val" style="color:var(--danger);">Rs. {{ number_format($totalExpenses, 0) }}</div>
-        <div class="kpi-sub">Net Profit: <strong style="color:{{ $netProfit >= 0 ? 'var(--primary)' : 'var(--danger)' }};">Rs. {{ number_format($netProfit, 0) }}</strong></div>
+        <div class="kpi-sub">Net Profit: <strong style="color:{{ $netProfit >= 0 ? '#1b5e20' : 'var(--danger)' }};">Rs. {{ number_format($netProfit, 0) }}</strong></div>
     </div>
     <div class="card">
-        <div class="kpi-label">Credit Receivable (Udhaar)</div>
+        <div class="kpi-label">Credit Receivable</div>
         <div class="kpi-val" style="color:var(--warn);">Rs. {{ number_format($totalCreditDue, 0) }}</div>
-        <div class="kpi-sub">Pending customer balances</div>
+        <div class="kpi-sub">{{ $activeStaffCount }} active admins/staff accounts</div>
     </div>
     <div class="card">
-        <div class="kpi-label">Pesticide Inventory</div>
+        <div class="kpi-label">Inventory Summary</div>
         <div class="kpi-val">{{ number_format($totalProducts) }} SKUs</div>
         <div class="kpi-sub">{{ number_format($totalUnits) }} units · {{ $lowStockCount }} low · {{ $expiredCount }} expired · {{ $expiringSoonCount }} ≤30d</div>
     </div>
@@ -36,7 +36,7 @@
                 <thead>
                     <tr>
                         <th>Invoice #</th>
-                        <th>Customer</th>
+                        <th>Customer / By Admin</th>
                         <th>Total</th>
                         <th>Status</th>
                     </tr>
@@ -48,11 +48,14 @@
                                 <a href="{{ route('admin.invoices.show', $inv->id) }}" style="color:var(--primary); font-weight:700;">
                                     {{ $inv->invoice_number }}
                                 </a>
-                                <div style="font-size:11.5px; color:var(--muted);">
-                                    {{ $bizMap[$inv->business_id]->name ?? 'Business' }}
-                                </div>
+                                <div style="font-size:11.5px; color:var(--muted);">{{ $bizMap[$inv->business_id]->name ?? 'Business' }}</div>
                             </td>
-                            <td>{{ $inv->customer_name }}</td>
+                            <td>
+                                <div>{{ $inv->customer_name }}</div>
+                                @if(!empty($inv->performed_by_name))
+                                    <div style="font-size:11.5px; color:var(--primary); font-weight:600;">By: {{ $inv->performed_by_name }}</div>
+                                @endif
+                            </td>
                             <td class="num"><strong>Rs. {{ number_format($inv->grand_total, 0) }}</strong></td>
                             <td>
                                 @if($inv->is_returned)
@@ -77,7 +80,7 @@
     <div class="card">
         <div class="card-header">
             <h2 class="card-title">Stock &amp; Expiry Alerts</h2>
-            <a href="{{ route('admin.products', ['filter' => 'expiring']) }}" class="btn btn-sm">Manage Stock</a>
+            <a href="{{ route('admin.products', ['filter' => 'low']) }}" class="btn btn-sm">Manage Stock</a>
         </div>
         <div class="table-wrap">
             <table>
@@ -99,23 +102,15 @@
                         <tr>
                             <td>
                                 <strong>{{ $p->name }}</strong>
-                                <div style="font-size:11.5px; color:var(--muted);">
-                                    {{ $p->batch_number ? "Batch {$p->batch_number}" : ($p->brand ?: '—') }}
-                                </div>
+                                <div style="font-size:11.5px; color:var(--muted);">{{ $p->batch_number ?: ($p->brand ?: '—') }}</div>
                             </td>
                             <td class="num">{{ $p->stock_qty }}</td>
                             <td class="num">
                                 {{ $p->expiry_date_millis > 0 ? \Carbon\Carbon::createFromTimestampMs($p->expiry_date_millis)->format('d M Y') : '—' }}
                             </td>
                             <td>
-                                @if($isExpired)
-                                    <span class="badge badge-red">EXPIRED</span>
-                                @elseif($isSoon)
-                                    <span class="badge badge-amber">EXPIRING ≤30d</span>
-                                @endif
-                                @if($isLow)
-                                    <span class="badge badge-amber">LOW STOCK</span>
-                                @endif
+                                @if($isExpired)<span class="badge badge-red">EXPIRED</span>@elseif($isSoon)<span class="badge badge-amber">EXPIRING ≤30d</span>@endif
+                                @if($isLow)<span class="badge badge-amber">LOW STOCK</span>@endif
                             </td>
                         </tr>
                     @empty

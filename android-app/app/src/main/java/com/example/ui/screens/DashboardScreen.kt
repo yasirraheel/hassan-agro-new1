@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.EventBusy
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -45,18 +46,19 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.data.local.AuthSession
 import com.example.data.local.BusinessEntity
 import com.example.data.local.ExpenseEntity
 import com.example.data.local.ExpiryStatus
 import com.example.data.local.InvoiceWithItems
 import com.example.data.local.ProductEntity
 import com.example.ui.components.EmptyStateCard
+import com.example.ui.components.PerformedByPill
 import com.example.ui.theme.ExpiredBg
 import com.example.ui.theme.ExpiredCrimson
 import com.example.ui.theme.ExpiringSoonAmber
 import com.example.ui.theme.ExpiringSoonBg
-import com.example.ui.theme.HeroGradientEnd
-import com.example.ui.theme.HeroGradientStart
+import com.example.ui.theme.LocalAppThemeOption
 import com.example.ui.theme.MonoCodeSmall
 import com.example.ui.theme.MonoFigureLarge
 import com.example.ui.theme.MonoFigureMedium
@@ -67,6 +69,7 @@ import java.util.Calendar
 @Composable
 fun DashboardScreen(
     activeBusiness: BusinessEntity,
+    authSession: AuthSession,
     products: List<ProductEntity>,
     invoices: List<InvoiceWithItems>,
     expenses: List<ExpenseEntity>,
@@ -78,6 +81,9 @@ fun DashboardScreen(
     onOpenInvoice: (InvoiceWithItems) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val activeTheme = LocalAppThemeOption.current
+    val currency = activeBusiness.resolvedCurrency()
+
     val nowCal = remember { Calendar.getInstance() }
     val (monthStart, monthEnd) = remember {
         Formatters.monthBoundsMillis(nowCal.get(Calendar.YEAR), nowCal.get(Calendar.MONTH))
@@ -123,7 +129,7 @@ fun DashboardScreen(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // Hero Ledger Card
+            // Hero Ledger Card dynamically tinted to business theme
             item {
                 Surface(
                     shape = MaterialTheme.shapes.extraLarge,
@@ -136,7 +142,7 @@ fun DashboardScreen(
                         modifier = Modifier
                             .background(
                                 Brush.linearGradient(
-                                    colors = listOf(HeroGradientStart, HeroGradientEnd)
+                                    colors = listOf(activeTheme.heroStart, activeTheme.heroEnd)
                                 )
                             )
                             .padding(20.dp)
@@ -150,44 +156,69 @@ fun DashboardScreen(
                                 Text(
                                     text = "$currentMonthLabel Net Balance",
                                     style = MaterialTheme.typography.labelLarge,
-                                    color = Color.White.copy(alpha = 0.85f)
+                                    color = Color.White.copy(alpha = 0.85f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
                                 )
+                                Spacer(Modifier.width(8.dp))
                                 Surface(
                                     shape = RoundedCornerShape(12.dp),
                                     color = Color.White.copy(alpha = 0.16f)
                                 ) {
                                     Text(
-                                        text = "Today: ${Formatters.formatCompactPkr(todaySales)}",
+                                        text = "Today: ${Formatters.formatCompactPkr(todaySales, currency)}",
                                         style = MonoCodeSmall,
                                         color = Color.White,
+                                        maxLines = 1,
+                                        softWrap = false,
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                                     )
                                 }
                             }
                             Spacer(Modifier.height(6.dp))
                             Text(
-                                text = Formatters.formatPkr(netProfit),
+                                text = Formatters.formatPkr(netProfit, currency),
                                 style = MonoFigureLarge,
                                 color = Color.White
                             )
-                            Spacer(Modifier.height(16.dp))
+                            Spacer(Modifier.height(6.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.VerifiedUser,
+                                    contentDescription = null,
+                                    tint = Color.White.copy(alpha = 0.85f),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = "${authSession.userName} • ${authSession.roleName.ifBlank { "Admin" }}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.White.copy(alpha = 0.85f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(Modifier.height(14.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 HeroSubMetric(
                                     label = "Monthly Sales",
-                                    value = Formatters.formatCompactPkr(monthlySales),
+                                    value = Formatters.formatCompactPkr(monthlySales, currency),
                                     modifier = Modifier.weight(1f)
                                 )
                                 HeroSubMetric(
                                     label = "Expenses",
-                                    value = Formatters.formatCompactPkr(monthlyExpenses),
+                                    value = Formatters.formatCompactPkr(monthlyExpenses, currency),
                                     modifier = Modifier.weight(1f)
                                 )
                                 HeroSubMetric(
                                     label = "Stock Value",
-                                    value = Formatters.formatCompactPkr(stockValuation),
+                                    value = Formatters.formatCompactPkr(stockValuation, currency),
                                     modifier = Modifier.weight(1f)
                                 )
                             }
@@ -241,10 +272,10 @@ fun DashboardScreen(
                 }
             }
 
-            // Pesticide Expiry & Stock Health Alerts
+            // Stock Health Alerts (adapts cleanly to whether this business tracks Expiry Dates!)
             item {
                 Text(
-                    text = "Pesticide Stock & Expiry Alerts",
+                    text = if (activeBusiness.trackExpiry) "Stock & Expiry Alerts" else "Inventory Health",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onBackground
                 )
@@ -253,26 +284,39 @@ fun DashboardScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    AlertSummaryCard(
-                        icon = Icons.Default.EventBusy,
-                        count = expiredCount,
-                        label = "Expired",
-                        fg = ExpiredCrimson,
-                        bg = ExpiredBg,
-                        testTag = "alert_card_expired",
-                        onClick = { onOpenInventoryWithFilter(InventoryFilter.EXPIRED) },
-                        modifier = Modifier.weight(1f)
-                    )
-                    AlertSummaryCard(
-                        icon = Icons.Default.WarningAmber,
-                        count = expiringSoonCount,
-                        label = "Expiring ≤30d",
-                        fg = ExpiringSoonAmber,
-                        bg = ExpiringSoonBg,
-                        testTag = "alert_card_expiring",
-                        onClick = { onOpenInventoryWithFilter(InventoryFilter.EXPIRING_SOON) },
-                        modifier = Modifier.weight(1f)
-                    )
+                    if (activeBusiness.trackExpiry) {
+                        AlertSummaryCard(
+                            icon = Icons.Default.EventBusy,
+                            count = expiredCount,
+                            label = "Expired",
+                            fg = ExpiredCrimson,
+                            bg = ExpiredBg,
+                            testTag = "alert_card_expired",
+                            onClick = { onOpenInventoryWithFilter(InventoryFilter.EXPIRED) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        AlertSummaryCard(
+                            icon = Icons.Default.WarningAmber,
+                            count = expiringSoonCount,
+                            label = "Expiring ≤30d",
+                            fg = ExpiringSoonAmber,
+                            bg = ExpiringSoonBg,
+                            testTag = "alert_card_expiring",
+                            onClick = { onOpenInventoryWithFilter(InventoryFilter.EXPIRING_SOON) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    } else {
+                        AlertSummaryCard(
+                            icon = Icons.Default.Inventory2,
+                            count = products.size,
+                            label = "Total Products",
+                            fg = MaterialTheme.colorScheme.primary,
+                            bg = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
+                            testTag = "alert_card_total_skus",
+                            onClick = { onOpenInventoryWithFilter(InventoryFilter.ALL) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                     AlertSummaryCard(
                         icon = Icons.Default.Inventory2,
                         count = lowStockCount,
@@ -294,18 +338,24 @@ fun DashboardScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Recent POS Sales — ${activeBusiness.name}",
+                        text = "Recent Sales — ${activeBusiness.name}",
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onBackground
+                        color = MaterialTheme.colorScheme.onBackground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
                     )
+                    Spacer(Modifier.width(8.dp))
                     Text(
                         text = if (totalPendingCredit > 0.01)
-                            "Credit Due: ${Formatters.formatCompactPkr(totalPendingCredit)}"
+                            "Credit: ${Formatters.formatCompactPkr(totalPendingCredit, currency)}"
                         else
-                            "${products.size} SKUs in stock",
+                            "${products.size} SKUs",
                         style = MaterialTheme.typography.labelMedium,
                         color = if (totalPendingCredit > 0.01) ExpiringSoonAmber
-                        else MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }
@@ -315,7 +365,7 @@ fun DashboardScreen(
                     EmptyStateCard(
                         icon = Icons.Default.ReceiptLong,
                         title = "Ready for your first sale",
-                        subtitle = "Scan pesticide products into ${activeBusiness.name}'s inventory, then create 4-tier invoices with auto-tax & WhatsApp PDF sharing.",
+                        subtitle = "Add or scan products into ${activeBusiness.name}'s inventory, then create invoices with multi-tier pricing & WhatsApp PDF sharing.",
                         actionLabel = "Scan First Product",
                         onAction = onQuickScanStock,
                         actionTestTag = "dashboard_empty_scan_btn"
@@ -337,7 +387,7 @@ fun DashboardScreen(
                                 .padding(14.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                 Text(
                                     text = entry.invoice.customerName,
                                     style = MaterialTheme.typography.titleMedium,
@@ -347,13 +397,16 @@ fun DashboardScreen(
                                 Text(
                                     text = "${entry.invoice.invoiceNumber} • ${entry.items.size} items • ${Formatters.formatDate(entry.invoice.createdAt)}",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
+                                PerformedByPill(name = entry.invoice.performedByName)
                             }
                             Spacer(Modifier.width(8.dp))
                             Column(horizontalAlignment = Alignment.End) {
                                 Text(
-                                    text = Formatters.formatPkr(entry.invoice.grandTotal),
+                                    text = Formatters.formatPkr(entry.invoice.grandTotal, currency),
                                     style = MonoFigureMedium,
                                     color = MaterialTheme.colorScheme.primary
                                 )

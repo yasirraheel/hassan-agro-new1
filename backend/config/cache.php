@@ -15,5 +15,5 @@ return [
         ],
     ],
 
-    'prefix' => 'hassan_agro_cache_',
+    'prefix' => 'biz_manager_cache_',
 ];

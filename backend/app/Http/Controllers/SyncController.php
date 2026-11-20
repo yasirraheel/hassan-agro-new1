@@ -2,63 +2,64 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\RbacService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class SyncController extends Controller
 {
-    private function nowMs(): int
+    public function __construct(private readonly RbacService $rbac)
     {
-        return (int) round(microtime(true) * 1000);
-    }
-
-    private function unauthorized(Request $request): ?JsonResponse
-    {
-        $expected = (string) config('sync.api_token', '');
-        if ($expected === '') {
-            return null;
-        }
-        $provided = (string) $request->bearerToken();
-        if (!hash_equals($expected, $provided)) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Unauthorized: invalid Bearer token',
-            ], 401);
-        }
-        return null;
     }
 
     public function health(Request $request): JsonResponse
     {
-        if ($err = $this->unauthorized($request)) {
-            return $err;
+        $auth = $this->rbac->authenticateApiRequest($request);
+        if (!$auth) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Unauthorized: please sign in or provide a valid Bearer token',
+            ], 401);
         }
 
         return response()->json([
             'status' => 'ok',
-            'serverTime' => $this->nowMs(),
-            'message' => 'Hassan Agro Laravel Sync API ready',
+            'serverTime' => $this->rbac->nowMs(),
+            'message' => 'Business Manager Laravel Sync API ready',
         ]);
     }
 
     public function push(Request $request): JsonResponse
     {
-        if ($err = $this->unauthorized($request)) {
-            return $err;
+        $auth = $this->rbac->authenticateApiRequest($request);
+        if (!$auth) {
+            return response()->json([
+                'accepted' => false,
+                'serverTime' => $this->rbac->nowMs(),
+                'message' => 'Unauthorized: session expired or invalid token',
+            ], 401);
         }
 
-        $serverTime = $this->nowMs();
+        $user = $auth['user'];
+        $serverTime = $this->rbac->nowMs();
 
-        DB::transaction(function () use ($request, $serverTime) {
+        DB::transaction(function () use ($request, $serverTime, $user) {
             foreach ($request->input('businesses', []) as $b) {
-                $existing = DB::table('businesses')->where('id', $b['id'])->first();
+                $bizId = (string) ($b['id'] ?? '');
+                if ($bizId === '') {
+                    continue;
+                }
+                if ($user && !$this->rbac->hasPermission($user, 'manage_businesses') && !$this->rbac->canAccessBusiness($user, $bizId)) {
+                    continue;
+                }
+                $existing = DB::table('businesses')->where('id', $bizId)->first();
                 $incomingUpdated = (int) ($b['updatedAt'] ?? $serverTime);
                 if ($existing && (int) $existing->updated_at_ms > $incomingUpdated) {
                     continue;
                 }
                 DB::table('businesses')->updateOrInsert(
-                    ['id' => (string) $b['id']],
+                    ['id' => $bizId],
                     [
                         'name' => (string) ($b['name'] ?? ''),
                         'tagline' => (string) ($b['tagline'] ?? ''),
@@ -66,7 +67,8 @@ class SyncController extends Controller
                         'email' => (string) ($b['email'] ?? ''),
                         'address' => (string) ($b['address'] ?? ''),
                         'tax_id' => (string) ($b['taxId'] ?? ''),
-                        'invoice_prefix' => (string) ($b['invoicePrefix'] ?? 'HA'),
+                        'invoice_prefix' => (string) ($b['invoicePrefix'] ?? 'BM'),
+                        'theme_key' => strtoupper((string) ($b['themeKey'] ?? ($existing->theme_key ?? 'OCEAN'))),
                         'default_tax_rate' => (float) ($b['defaultTaxRate'] ?? 0),
                         'invoice_footer' => (string) ($b['invoiceFooter'] ?? ''),
                         'created_at_ms' => (int) ($b['createdAt'] ?? $serverTime),
@@ -78,18 +80,25 @@ class SyncController extends Controller
             }
 
             foreach ($request->input('products', []) as $p) {
+                $bizId = (string) ($p['businessId'] ?? '');
+                if (!$this->rbac->canAccessBusiness($user, $bizId)) {
+                    continue;
+                }
                 $existing = DB::table('products')->where('id', $p['id'])->first();
                 $incomingUpdated = (int) ($p['updatedAt'] ?? $serverTime);
                 if ($existing && (int) $existing->updated_at_ms > $incomingUpdated) {
                     continue;
                 }
+                $perfId = (string) (($p['performedById'] ?? '') ?: ($user['id'] ?? ''));
+                $perfName = (string) (($p['performedByName'] ?? '') ?: ($user['name'] ?? ''));
+
                 DB::table('products')->updateOrInsert(
                     ['id' => (string) $p['id']],
                     [
-                        'business_id' => (string) $p['businessId'],
+                        'business_id' => $bizId,
                         'name' => (string) ($p['name'] ?? ''),
                         'brand' => (string) ($p['brand'] ?? ''),
-                        'category' => (string) ($p['category'] ?? 'Insecticide'),
+                        'category' => (string) ($p['category'] ?? 'General'),
                         'pack_size' => (string) ($p['packSize'] ?? ''),
                         'barcode' => (string) ($p['barcode'] ?? ''),
                         'batch_number' => (string) ($p['batchNumber'] ?? ''),
@@ -101,6 +110,8 @@ class SyncController extends Controller
                         'distributor_price' => (float) ($p['distributorPrice'] ?? 0),
                         'wholesaler_price' => (float) ($p['wholesalerPrice'] ?? 0),
                         'retail_price' => (float) ($p['retailPrice'] ?? 0),
+                        'performed_by_id' => $perfId,
+                        'performed_by_name' => $perfName,
                         'updated_at_ms' => $incomingUpdated,
                         'server_modified_at_ms' => $serverTime,
                         'is_deleted' => (bool) ($p['isDeleted'] ?? false),
@@ -109,15 +120,22 @@ class SyncController extends Controller
             }
 
             foreach ($request->input('invoices', []) as $inv) {
+                $bizId = (string) ($inv['businessId'] ?? '');
+                if (!$this->rbac->canAccessBusiness($user, $bizId)) {
+                    continue;
+                }
                 $existing = DB::table('invoices')->where('id', $inv['id'])->first();
                 $incomingUpdated = (int) ($inv['updatedAt'] ?? $serverTime);
                 if ($existing && (int) $existing->updated_at_ms > $incomingUpdated) {
                     continue;
                 }
+                $perfId = (string) (($inv['performedById'] ?? '') ?: ($user['id'] ?? ''));
+                $perfName = (string) (($inv['performedByName'] ?? '') ?: ($user['name'] ?? ''));
+
                 DB::table('invoices')->updateOrInsert(
                     ['id' => (string) $inv['id']],
                     [
-                        'business_id' => (string) $inv['businessId'],
+                        'business_id' => $bizId,
                         'invoice_number' => (string) ($inv['invoiceNumber'] ?? ''),
                         'customer_name' => (string) ($inv['customerName'] ?? 'Walk-in Customer'),
                         'customer_phone' => (string) ($inv['customerPhone'] ?? ''),
@@ -135,6 +153,8 @@ class SyncController extends Controller
                         'balance_due' => (float) ($inv['balanceDue'] ?? 0),
                         'is_returned' => (bool) ($inv['isReturned'] ?? false),
                         'notes' => (string) ($inv['notes'] ?? ''),
+                        'performed_by_id' => $perfId,
+                        'performed_by_name' => $perfName,
                         'created_at_ms' => (int) ($inv['createdAt'] ?? $serverTime),
                         'updated_at_ms' => $incomingUpdated,
                         'server_modified_at_ms' => $serverTime,
@@ -159,21 +179,30 @@ class SyncController extends Controller
             }
 
             foreach ($request->input('expenses', []) as $e) {
+                $bizId = (string) ($e['businessId'] ?? '');
+                if (!$this->rbac->canAccessBusiness($user, $bizId)) {
+                    continue;
+                }
                 $existing = DB::table('expenses')->where('id', $e['id'])->first();
                 $incomingUpdated = (int) ($e['updatedAt'] ?? $serverTime);
                 if ($existing && (int) $existing->updated_at_ms > $incomingUpdated) {
                     continue;
                 }
+                $perfId = (string) (($e['performedById'] ?? '') ?: ($user['id'] ?? ''));
+                $perfName = (string) (($e['performedByName'] ?? '') ?: ($user['name'] ?? ''));
+
                 DB::table('expenses')->updateOrInsert(
                     ['id' => (string) $e['id']],
                     [
-                        'business_id' => (string) $e['businessId'],
+                        'business_id' => $bizId,
                         'title' => (string) ($e['title'] ?? ''),
                         'category' => (string) ($e['category'] ?? 'Other'),
                         'amount' => (float) ($e['amount'] ?? 0),
                         'payment_method' => (string) ($e['paymentMethod'] ?? 'Cash'),
                         'payee' => (string) ($e['payee'] ?? ''),
                         'notes' => (string) ($e['notes'] ?? ''),
+                        'performed_by_id' => $perfId,
+                        'performed_by_name' => $perfName,
                         'expense_date_millis' => (int) ($e['expenseDateMillis'] ?? $serverTime),
                         'updated_at_ms' => $incomingUpdated,
                         'server_modified_at_ms' => $serverTime,
@@ -192,18 +221,30 @@ class SyncController extends Controller
 
     public function pull(Request $request): JsonResponse
     {
-        if ($err = $this->unauthorized($request)) {
-            return $err;
+        $auth = $this->rbac->authenticateApiRequest($request);
+        if (!$auth) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Unauthorized: session expired or invalid token',
+            ], 401);
         }
+
+        $user = $auth['user'];
+        $allowed = $user ? ($user['allowedBusinessIds'] ?? ['*']) : ['*'];
+        $restrictBusinesses = !in_array('*', $allowed, true);
 
         $since = (int) $request->query('since', 0);
         $serverTime = $this->nowMs();
 
-        $filter = fn ($query) => $since > 0
+        $timeFilter = fn ($query) => $since > 0
             ? $query->where('server_modified_at_ms', '>', $since)
             : $query;
 
-        $businesses = $filter(DB::table('businesses'))->get()->map(fn ($b) => [
+        $bizQuery = $timeFilter(DB::table('businesses'));
+        if ($restrictBusinesses) {
+            $bizQuery->whereIn('id', $allowed);
+        }
+        $businesses = $bizQuery->get()->map(fn ($b) => [
             'id' => (string) $b->id,
             'name' => (string) $b->name,
             'tagline' => (string) ($b->tagline ?? ''),
@@ -211,7 +252,18 @@ class SyncController extends Controller
             'email' => (string) ($b->email ?? ''),
             'address' => (string) ($b->address ?? ''),
             'taxId' => (string) ($b->tax_id ?? ''),
-            'invoicePrefix' => (string) ($b->invoice_prefix ?? 'HA'),
+            'invoicePrefix' => (string) ($b->invoice_prefix ?? 'BM'),
+            'themeKey' => (string) ($b->theme_key ?? 'OCEAN'),
+            'businessType' => (string) ($b->business_type ?? 'GENERAL'),
+            'currencySymbol' => (string) ($b->currency_symbol ?? 'Rs.'),
+            'trackExpiry' => (bool) ($b->track_expiry ?? true),
+            'trackBatch' => (bool) ($b->track_batch ?? true),
+            'batchFieldLabel' => (string) ($b->batch_field_label ?? 'Batch No.'),
+            'packSizeLabel' => (string) ($b->pack_size_label ?? 'Pack / Size'),
+            'productCategoriesJson' => (string) ($b->product_categories_json ?? ''),
+            'expenseCategoriesJson' => (string) ($b->expense_categories_json ?? ''),
+            'paymentMethodsJson' => (string) ($b->payment_methods_json ?? ''),
+            'pricingTierLabelsJson' => (string) ($b->pricing_tier_labels_json ?? ''),
             'defaultTaxRate' => (float) $b->default_tax_rate,
             'invoiceFooter' => (string) ($b->invoice_footer ?? ''),
             'createdAt' => (int) $b->created_at_ms,
@@ -219,12 +271,16 @@ class SyncController extends Controller
             'isDeleted' => (bool) $b->is_deleted,
         ])->values();
 
-        $products = $filter(DB::table('products'))->get()->map(fn ($p) => [
+        $prodQuery = $timeFilter(DB::table('products'));
+        if ($restrictBusinesses) {
+            $prodQuery->whereIn('business_id', $allowed);
+        }
+        $products = $prodQuery->get()->map(fn ($p) => [
             'id' => (string) $p->id,
             'businessId' => (string) $p->business_id,
             'name' => (string) $p->name,
             'brand' => (string) ($p->brand ?? ''),
-            'category' => (string) ($p->category ?? 'Insecticide'),
+            'category' => (string) ($p->category ?? 'General'),
             'packSize' => (string) ($p->pack_size ?? ''),
             'barcode' => (string) ($p->barcode ?? ''),
             'batchNumber' => (string) ($p->batch_number ?? ''),
@@ -236,11 +292,17 @@ class SyncController extends Controller
             'distributorPrice' => (float) $p->distributor_price,
             'wholesalerPrice' => (float) $p->wholesaler_price,
             'retailPrice' => (float) $p->retail_price,
+            'performedById' => (string) ($p->performed_by_id ?? ''),
+            'performedByName' => (string) ($p->performed_by_name ?? ''),
             'updatedAt' => (int) $p->updated_at_ms,
             'isDeleted' => (bool) $p->is_deleted,
         ])->values();
 
-        $invoiceRows = $filter(DB::table('invoices'))->get();
+        $invQuery = $timeFilter(DB::table('invoices'));
+        if ($restrictBusinesses) {
+            $invQuery->whereIn('business_id', $allowed);
+        }
+        $invoiceRows = $invQuery->get();
         $invoiceIds = $invoiceRows->pluck('id')->all();
         $itemsByInvoice = empty($invoiceIds)
             ? collect()
@@ -279,6 +341,8 @@ class SyncController extends Controller
                 'balanceDue' => (float) $inv->balance_due,
                 'isReturned' => (bool) $inv->is_returned,
                 'notes' => (string) ($inv->notes ?? ''),
+                'performedById' => (string) ($inv->performed_by_id ?? ''),
+                'performedByName' => (string) ($inv->performed_by_name ?? ''),
                 'createdAt' => (int) $inv->created_at_ms,
                 'updatedAt' => (int) $inv->updated_at_ms,
                 'isDeleted' => (bool) $inv->is_deleted,
@@ -286,7 +350,11 @@ class SyncController extends Controller
             ];
         })->values();
 
-        $expenses = $filter(DB::table('expenses'))->get()->map(fn ($e) => [
+        $expQuery = $timeFilter(DB::table('expenses'));
+        if ($restrictBusinesses) {
+            $expQuery->whereIn('business_id', $allowed);
+        }
+        $expenses = $expQuery->get()->map(fn ($e) => [
             'id' => (string) $e->id,
             'businessId' => (string) $e->business_id,
             'title' => (string) $e->title,
@@ -295,6 +363,8 @@ class SyncController extends Controller
             'paymentMethod' => (string) ($e->payment_method ?? 'Cash'),
             'payee' => (string) ($e->payee ?? ''),
             'notes' => (string) ($e->notes ?? ''),
+            'performedById' => (string) ($e->performed_by_id ?? ''),
+            'performedByName' => (string) ($e->performed_by_name ?? ''),
             'expenseDateMillis' => (int) $e->expense_date_millis,
             'updatedAt' => (int) $e->updated_at_ms,
             'isDeleted' => (bool) $e->is_deleted,
@@ -302,6 +372,7 @@ class SyncController extends Controller
 
         return response()->json([
             'serverTime' => $serverTime,
+            'user' => $user,
             'businesses' => $businesses,
             'products' => $products,
             'invoices' => $invoices,

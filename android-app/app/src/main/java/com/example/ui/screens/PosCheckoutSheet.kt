@@ -57,12 +57,14 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.data.local.BusinessEntity
 import com.example.data.local.ExpiryStatus
+import com.example.data.local.InvoicePaymentStatus
 import com.example.data.local.InvoiceWithItems
-import com.example.data.local.PaymentMethod
 import com.example.data.local.PricingTier
 import com.example.ui.components.AgriFilterChip
 import com.example.ui.components.FormScreenDialog
+import com.example.ui.components.PerformedByPill
 import com.example.ui.theme.ExpiredCrimson
 import com.example.ui.theme.ExpiringSoonAmber
 import com.example.ui.theme.ExpiringSoonBg
@@ -81,6 +83,7 @@ import kotlin.math.ceil
 
 @Composable
 fun PosCheckoutSheet(
+    business: BusinessEntity,
     draft: BillingDraftState,
     onUpdateCustomer: (String, String, String) -> Unit,
     onSelectTier: (PricingTier) -> Unit,
@@ -94,9 +97,14 @@ fun PosCheckoutSheet(
     onCompleteSale: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val currency = business.resolvedCurrency()
+    val paymentMethods = remember(business.paymentMethodsJson, business.businessType) {
+        business.paymentMethods()
+    }
+
     FormScreenDialog(
         title = "POS Checkout",
-        subtitle = "${draft.totalItemCount} units • ${draft.pricingTier.label} pricing",
+        subtitle = "${draft.totalItemCount} units • ${business.tierLabel(draft.pricingTier)} pricing",
         onDismiss = onDismiss,
         topActions = {
             OutlinedButton(
@@ -124,7 +132,7 @@ fun PosCheckoutSheet(
                 ) {
                     Text("Grand Total", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        text = Formatters.formatPkr(draft.grandTotal),
+                        text = Formatters.formatPkr(draft.grandTotal, currency),
                         style = MonoFigureLarge,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -147,16 +155,15 @@ fun PosCheckoutSheet(
             }
         }
     ) {
-        // Cart Lines Review
         draft.cartLines.forEach { line ->
             PosCartLineRow(
+                business = business,
                 line = line,
                 onQtyChange = { onUpdateCartQty(line.product.id, it) },
                 onUnitPriceChange = { onUpdateCartPrice(line.product.id, it) }
             )
         }
 
-        // Quick Tier Switch inside Checkout
         Row(
             modifier = Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -165,12 +172,11 @@ fun PosCheckoutSheet(
                 AgriFilterChip(
                     selected = draft.pricingTier == tier,
                     onClick = { onSelectTier(tier) },
-                    label = tier.label
+                    label = business.tierLabel(tier)
                 )
             }
         }
 
-        // Customer Info
         OutlinedTextField(
             value = draft.customerName,
             onValueChange = { onUpdateCustomer(it, draft.customerPhone, draft.customerEmail) },
@@ -200,7 +206,6 @@ fun PosCheckoutSheet(
             )
         }
 
-        // Tax & Discount Section
         Surface(
             shape = MaterialTheme.shapes.medium,
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
@@ -240,7 +245,7 @@ fun PosCheckoutSheet(
                     OutlinedTextField(
                         value = draft.discountText,
                         onValueChange = onUpdateDiscount,
-                        label = { Text("Discount (Rs.)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        label = { Text("Discount ($currency)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         singleLine = true,
                         modifier = Modifier.weight(1f)
@@ -256,7 +261,6 @@ fun PosCheckoutSheet(
             }
         }
 
-        // Payment Method & Cash Tendered / Credit Settlement
         Surface(
             shape = MaterialTheme.shapes.medium,
             color = MaterialTheme.colorScheme.surface,
@@ -271,12 +275,11 @@ fun PosCheckoutSheet(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    PaymentMethod.entries.forEach { method ->
+                    paymentMethods.forEach { method ->
                         AgriFilterChip(
-                            selected = !draft.isCreditSale && draft.paymentMethod == method.label,
-                            onClick = { onUpdatePayment(method.label, false, draft.amountReceivedText) },
-                            label = method.label,
-                            modifier = Modifier.testTag("pos_pay_${method.name.lowercase()}")
+                            selected = !draft.isCreditSale && draft.paymentMethod == method,
+                            onClick = { onUpdatePayment(method, false, draft.amountReceivedText) },
+                            label = method
                         )
                     }
                     AgriFilterChip(
@@ -292,12 +295,12 @@ fun PosCheckoutSheet(
                     onValueChange = { onUpdatePayment(draft.paymentMethod, draft.isCreditSale, it) },
                     label = {
                         Text(
-                            text = if (draft.isCreditSale) "Advance Paid (Rs.)" else "Cash Received (Rs.)",
+                            text = if (draft.isCreditSale) "Advance Paid ($currency)" else "Cash Received ($currency)",
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     },
-                    placeholder = { Text(Formatters.formatPkr(draft.grandTotal).removePrefix("Rs. "), maxLines = 1) },
+                    placeholder = { Text(Formatters.formatPkr(draft.grandTotal, currency).removePrefix("$currency "), maxLines = 1) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
                     modifier = Modifier
@@ -312,10 +315,10 @@ fun PosCheckoutSheet(
                     val exactVal = ceil(draft.grandTotal).toInt()
                     val presets = listOf(
                         "Exact" to exactVal.toString(),
-                        "Rs. 1,000" to "1000",
-                        "Rs. 5,000" to "5000",
-                        "Rs. 10,000" to "10000",
-                        "Rs. 0 Credit" to "0"
+                        "$currency 1,000" to "1000",
+                        "$currency 5,000" to "5000",
+                        "$currency 10,000" to "10000",
+                        "0 Credit" to "0"
                     )
                     presets.forEach { (label, value) ->
                         OutlinedButton(
@@ -344,7 +347,7 @@ fun PosCheckoutSheet(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text("Change to Return", style = MaterialTheme.typography.labelLarge, color = SafeStockGreen)
-                            Text(Formatters.formatPkr(draft.changeToReturn), style = MonoFigureMedium, color = SafeStockGreen)
+                            Text(Formatters.formatPkr(draft.changeToReturn, currency), style = MonoFigureMedium, color = SafeStockGreen)
                         }
                     }
                 } else if (draft.balanceDue > 0.01) {
@@ -356,21 +359,20 @@ fun PosCheckoutSheet(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text("Remaining Credit", style = MaterialTheme.typography.labelLarge, color = ExpiringSoonAmber)
-                            Text(Formatters.formatPkr(draft.balanceDue), style = MonoFigureMedium, color = ExpiringSoonAmber)
+                            Text(Formatters.formatPkr(draft.balanceDue, currency), style = MonoFigureMedium, color = ExpiringSoonAmber)
                         }
                     }
                 }
             }
         }
 
-        // Breakdown Summary
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        CheckoutSummaryRow("Subtotal", Formatters.formatPkr(draft.subtotal))
+        CheckoutSummaryRow("Subtotal", Formatters.formatPkr(draft.subtotal, currency))
         if (draft.discountAmount > 0.0) {
-            CheckoutSummaryRow("Discount", "-${Formatters.formatPkr(draft.discountAmount)}")
+            CheckoutSummaryRow("Discount", "-${Formatters.formatPkr(draft.discountAmount, currency)}")
         }
         if (draft.taxEnabled && draft.taxRatePercent > 0.0) {
-            CheckoutSummaryRow("Tax (${draft.taxRatePercent}%)", Formatters.formatPkr(draft.taxAmount))
+            CheckoutSummaryRow("Tax (${draft.taxRatePercent}%)", Formatters.formatPkr(draft.taxAmount, currency))
         }
         Spacer(Modifier.height(12.dp))
     }
@@ -378,11 +380,13 @@ fun PosCheckoutSheet(
 
 @Composable
 private fun PosCartLineRow(
+    business: BusinessEntity,
     line: BillingCartLine,
     onQtyChange: (Int) -> Unit,
     onUnitPriceChange: (Double) -> Unit
 ) {
-    val isExpired = Formatters.expiryStatus(line.product.expiryDateMillis) == ExpiryStatus.EXPIRED
+    val isExpired = business.trackExpiry && Formatters.expiryStatus(line.product.expiryDateMillis) == ExpiryStatus.EXPIRED
+    val currency = business.resolvedCurrency()
     var rateText by remember(line.product.id, line.unitPrice) { mutableStateOf(line.unitPrice.toString()) }
 
     Surface(
@@ -404,7 +408,12 @@ private fun PosCartLineRow(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "Stock: ${line.product.stockQty} • Batch: ${line.product.batchNumber.ifBlank { "-" }}",
+                        text = buildString {
+                            append("Stock: ${line.product.stockQty}")
+                            if (business.trackBatch && line.product.batchNumber.isNotBlank()) {
+                                append(" • ${business.batchFieldLabel}: ${line.product.batchNumber}")
+                            }
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = if (isExpired) ExpiredCrimson else MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -442,7 +451,7 @@ private fun PosCartLineRow(
                     modifier = Modifier.width(105.dp)
                 )
                 Text(
-                    text = Formatters.formatPkr(line.lineTotal),
+                    text = Formatters.formatPkr(line.lineTotal, currency),
                     style = MonoFigureMedium,
                     color = MaterialTheme.colorScheme.primary,
                     maxLines = 1,
@@ -467,6 +476,7 @@ private fun CheckoutSummaryRow(label: String, value: String) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HeldCartsSheet(
+    currencySymbol: String,
     heldCarts: List<HeldCart>,
     onResume: (String) -> Unit,
     onDiscard: (String) -> Unit,
@@ -508,7 +518,7 @@ fun HeldCartsSheet(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(held.label, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(
-                                    text = "${held.draft.totalItemCount} items • ${Formatters.formatPkr(held.draft.grandTotal)}",
+                                    text = "${held.draft.totalItemCount} items • ${Formatters.formatPkr(held.draft.grandTotal, currencySymbol)}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1
@@ -538,6 +548,7 @@ fun HeldCartsSheet(
 
 @Composable
 fun ReceivePaymentDialog(
+    currencySymbol: String,
     invoiceWithItems: InvoiceWithItems,
     onConfirm: (Double) -> Unit,
     onDismiss: () -> Unit
@@ -551,13 +562,13 @@ fun ReceivePaymentDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    text = "${inv.invoiceNumber} • ${inv.customerName}\nRemaining Balance: ${Formatters.formatPkr(inv.balanceDue)}",
+                    text = "${inv.invoiceNumber} • ${inv.customerName}\nRemaining Balance: ${Formatters.formatPkr(inv.balanceDue, currencySymbol)}",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 OutlinedTextField(
                     value = amountText,
                     onValueChange = { amountText = it },
-                    label = { Text("Amount Received (Rs.)", maxLines = 1) },
+                    label = { Text("Amount Received ($currencySymbol)", maxLines = 1) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
                     modifier = Modifier
@@ -586,6 +597,7 @@ fun ReceivePaymentDialog(
 
 @Composable
 fun ReturnSaleConfirmDialog(
+    currencySymbol: String,
     invoiceWithItems: InvoiceWithItems,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
@@ -596,7 +608,7 @@ fun ReturnSaleConfirmDialog(
         title = { Text("Return Sale & Restock?") },
         text = {
             Text(
-                text = "Mark invoice #${inv.invoiceNumber} (${Formatters.formatPkr(inv.grandTotal)}) as Returned and restore all ${invoiceWithItems.items.sumOf { it.quantity }} sold units back into inventory stock?"
+                text = "Mark invoice #${inv.invoiceNumber} (${Formatters.formatPkr(inv.grandTotal, currencySymbol)}) as Returned and restore all ${invoiceWithItems.items.sumOf { it.quantity }} sold units back into inventory stock?"
             )
         },
         confirmButton = {
@@ -622,7 +634,8 @@ fun InvoiceShareDialog(
     val context = LocalContext.current
     val inv = event.invoiceWithItems.invoice
     val biz = event.business
-    val caption = "Invoice #${inv.invoiceNumber} from ${biz.name} — Total: ${Formatters.formatPkr(inv.grandTotal)}"
+    val currency = biz.resolvedCurrency()
+    val caption = "Invoice #${inv.invoiceNumber} from ${biz.name} — Total: ${Formatters.formatPkr(inv.grandTotal, currency)}"
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -641,14 +654,15 @@ fun InvoiceShareDialog(
                     text = "${biz.name} • #${inv.invoiceNumber}",
                     style = MaterialTheme.typography.titleMedium
                 )
+                PerformedByPill(name = inv.performedByName)
                 Text(
                     text = buildString {
                         append("Customer: ${inv.customerName}\n")
-                        append("Total: ${Formatters.formatPkr(inv.grandTotal)} • ${inv.paymentMethod}\n")
+                        append("Total: ${Formatters.formatPkr(inv.grandTotal, currency)} • ${inv.paymentMethod}\n")
                         if (inv.balanceDue > 0.01 && !inv.isReturned) {
-                            append("Paid: ${Formatters.formatPkr(inv.amountPaid)} | Credit Due: ${Formatters.formatPkr(inv.balanceDue)}")
+                            append("Paid: ${Formatters.formatPkr(inv.amountPaid, currency)} | Credit Due: ${Formatters.formatPkr(inv.balanceDue, currency)}")
                         } else {
-                            append("Status: ${com.example.data.local.InvoicePaymentStatus.fromName(inv.paymentStatus).label}")
+                            append("Status: ${InvoicePaymentStatus.fromName(inv.paymentStatus).label}")
                         }
                     },
                     style = MaterialTheme.typography.bodyMedium,
@@ -673,7 +687,7 @@ fun InvoiceShareDialog(
                             pdfFile = event.pdfFile,
                             recipientEmail = inv.customerEmail,
                             subject = "Invoice #${inv.invoiceNumber} — ${biz.name}",
-                            body = "Dear ${inv.customerName},\n\nPlease find attached your sales invoice #${inv.invoiceNumber} totaling ${Formatters.formatPkr(inv.grandTotal)}.\n\nRegards,\n${biz.name}"
+                            body = "Dear ${inv.customerName},\n\nPlease find attached your sales invoice #${inv.invoiceNumber} totaling ${Formatters.formatPkr(inv.grandTotal, currency)}.\n\nRegards,\n${biz.name}"
                         )
                     },
                     modifier = Modifier

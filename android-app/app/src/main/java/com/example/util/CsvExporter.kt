@@ -9,7 +9,7 @@ import java.io.File
 object CsvExporter {
     fun buildInventoryCsv(products: List<ProductEntity>): String {
         val sb = StringBuilder()
-        sb.appendLine("Name,Brand,Category,PackSize,Barcode,BatchNumber,ExpiryDate,ExpiryStatus,StockQty,LowStockThreshold,PurchasePrice,MRP,DistributorPrice,WholesalerPrice,RetailPrice")
+        sb.appendLine("Name,Brand,Category,PackSize,Barcode,BatchNumber,ExpiryDate,ExpiryStatus,StockQty,LowStockThreshold,PurchasePrice,MRP,DistributorPrice,WholesalerPrice,RetailPrice,PerformedBy")
         products.forEach { p ->
             sb.appendLine(
                 listOf(
@@ -27,7 +27,8 @@ object CsvExporter {
                     p.mrpPrice.toString(),
                     p.distributorPrice.toString(),
                     p.wholesalerPrice.toString(),
-                    p.retailPrice.toString()
+                    p.retailPrice.toString(),
+                    p.performedByName
                 ).joinToString(",") { Formatters.csvEscape(it) }
             )
         }
@@ -36,7 +37,7 @@ object CsvExporter {
 
     fun buildExpensesCsv(expenses: List<ExpenseEntity>): String {
         val sb = StringBuilder()
-        sb.appendLine("Date,Title,Category,AmountPKR,PaymentMethod,Payee,Notes")
+        sb.appendLine("Date,Title,Category,Amount,PaymentMethod,Payee,PerformedBy,Notes")
         expenses.forEach { e ->
             sb.appendLine(
                 listOf(
@@ -46,6 +47,7 @@ object CsvExporter {
                     e.amount.toString(),
                     e.paymentMethod,
                     e.payee,
+                    e.performedByName,
                     e.notes
                 ).joinToString(",") { Formatters.csvEscape(it) }
             )
@@ -55,7 +57,7 @@ object CsvExporter {
 
     fun buildSalesCsv(invoices: List<InvoiceWithItems>): String {
         val sb = StringBuilder()
-        sb.appendLine("InvoiceNumber,Date,CustomerName,CustomerPhone,PricingTier,ItemCount,SubtotalPKR,DiscountPKR,TaxRatePercent,TaxAmountPKR,GrandTotalPKR,PaymentMethod,PaymentStatus,AmountPaidPKR,BalanceDuePKR")
+        sb.appendLine("InvoiceNumber,Date,CustomerName,CustomerPhone,PricingTier,ItemCount,Subtotal,Discount,TaxRatePercent,TaxAmount,GrandTotal,PaymentMethod,PaymentStatus,AmountPaid,BalanceDue,PerformedBy")
         invoices.forEach { entry ->
             val inv = entry.invoice
             sb.appendLine(
@@ -74,7 +76,8 @@ object CsvExporter {
                     inv.paymentMethod,
                     inv.paymentStatus,
                     inv.amountPaid.toString(),
-                    inv.balanceDue.toString()
+                    inv.balanceDue.toString(),
+                    inv.performedByName
                 ).joinToString(",") { Formatters.csvEscape(it) }
             )
         }

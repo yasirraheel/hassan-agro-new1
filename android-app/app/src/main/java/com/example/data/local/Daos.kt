@@ -7,6 +7,11 @@ import androidx.room.Query
 import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
+data class MonthlyTotalRow(
+    val yearMonth: String,
+    val total: Double
+)
+
 @Dao
 interface BusinessDao {
     @Query("SELECT * FROM businesses WHERE isDeleted = 0 ORDER BY createdAt ASC")
@@ -32,6 +37,9 @@ interface BusinessDao {
 
     @Query("SELECT COUNT(*) FROM businesses WHERE syncStatus = 'PENDING'")
     fun observePendingCount(): Flow<Int>
+
+    @Query("DELETE FROM businesses")
+    suspend fun deleteAll()
 }
 
 @Dao
@@ -51,8 +59,18 @@ interface ProductDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(product: ProductEntity)
 
-    @Query("UPDATE products SET stockQty = stockQty + :delta, updatedAt = :timestamp, syncStatus = 'PENDING' WHERE id = :id")
-    suspend fun adjustStock(id: String, delta: Int, timestamp: Long = System.currentTimeMillis())
+    @Query(
+        "UPDATE products SET stockQty = stockQty + :delta, performedById = CASE WHEN :performedById != '' THEN :performedById ELSE performedById END, " +
+            "performedByName = CASE WHEN :performedByName != '' THEN :performedByName ELSE performedByName END, " +
+            "updatedAt = :timestamp, syncStatus = 'PENDING' WHERE id = :id"
+    )
+    suspend fun adjustStock(
+        id: String,
+        delta: Int,
+        timestamp: Long = System.currentTimeMillis(),
+        performedById: String = "",
+        performedByName: String = ""
+    )
 
     @Query("UPDATE products SET isDeleted = 1, updatedAt = :timestamp, syncStatus = 'PENDING' WHERE id = :id")
     suspend fun softDelete(id: String, timestamp: Long = System.currentTimeMillis())
@@ -65,6 +83,9 @@ interface ProductDao {
 
     @Query("SELECT COUNT(*) FROM products WHERE syncStatus = 'PENDING'")
     fun observePendingCount(): Flow<Int>
+
+    @Query("DELETE FROM products")
+    suspend fun deleteAll()
 }
 
 @Dao
@@ -76,6 +97,33 @@ interface InvoiceDao {
     @Transaction
     @Query("SELECT * FROM invoices WHERE isDeleted = 0 ORDER BY createdAt DESC")
     fun observeAllActive(): Flow<List<InvoiceWithItems>>
+
+    @Query(
+        "SELECT strftime('%Y-%m', createdAt / 1000, 'unixepoch', 'localtime') AS yearMonth, " +
+            "COALESCE(SUM(grandTotal), 0.0) AS total " +
+            "FROM invoices " +
+            "WHERE businessId = :businessId AND isDeleted = 0 AND isReturned = 0 AND createdAt >= :sinceMillis " +
+            "GROUP BY yearMonth ORDER BY yearMonth ASC"
+    )
+    fun observeMonthlySalesTotals(businessId: String, sinceMillis: Long): Flow<List<MonthlyTotalRow>>
+
+    @Query(
+        "SELECT strftime('%Y-%m', createdAt / 1000, 'unixepoch', 'localtime') AS yearMonth, " +
+            "COALESCE(SUM(grandTotal), 0.0) AS total " +
+            "FROM invoices " +
+            "WHERE isDeleted = 0 AND isReturned = 0 AND createdAt >= :sinceMillis " +
+            "GROUP BY yearMonth ORDER BY yearMonth ASC"
+    )
+    fun observeAllMonthlySalesTotals(sinceMillis: Long): Flow<List<MonthlyTotalRow>>
+
+    @Query(
+        "SELECT strftime('%Y-%m', createdAt / 1000, 'unixepoch', 'localtime') AS yearMonth, " +
+            "COALESCE(SUM(grandTotal), 0.0) AS total " +
+            "FROM invoices " +
+            "WHERE businessId IN (:businessIds) AND isDeleted = 0 AND isReturned = 0 AND createdAt >= :sinceMillis " +
+            "GROUP BY yearMonth ORDER BY yearMonth ASC"
+    )
+    fun observeMonthlySalesTotalsForBusinesses(businessIds: List<String>, sinceMillis: Long): Flow<List<MonthlyTotalRow>>
 
     @Transaction
     @Query("SELECT * FROM invoices WHERE id = :id LIMIT 1")
@@ -111,6 +159,12 @@ interface InvoiceDao {
 
     @Query("SELECT COUNT(*) FROM invoices WHERE syncStatus = 'PENDING'")
     fun observePendingCount(): Flow<Int>
+
+    @Query("DELETE FROM invoice_items")
+    suspend fun deleteAllItems()
+
+    @Query("DELETE FROM invoices")
+    suspend fun deleteAll()
 }
 
 @Dao
@@ -120,6 +174,33 @@ interface ExpenseDao {
 
     @Query("SELECT * FROM expenses WHERE isDeleted = 0 ORDER BY expenseDateMillis DESC")
     fun observeAllActive(): Flow<List<ExpenseEntity>>
+
+    @Query(
+        "SELECT strftime('%Y-%m', expenseDateMillis / 1000, 'unixepoch', 'localtime') AS yearMonth, " +
+            "COALESCE(SUM(amount), 0.0) AS total " +
+            "FROM expenses " +
+            "WHERE businessId = :businessId AND isDeleted = 0 AND expenseDateMillis >= :sinceMillis " +
+            "GROUP BY yearMonth ORDER BY yearMonth ASC"
+    )
+    fun observeMonthlyExpenseTotals(businessId: String, sinceMillis: Long): Flow<List<MonthlyTotalRow>>
+
+    @Query(
+        "SELECT strftime('%Y-%m', expenseDateMillis / 1000, 'unixepoch', 'localtime') AS yearMonth, " +
+            "COALESCE(SUM(amount), 0.0) AS total " +
+            "FROM expenses " +
+            "WHERE isDeleted = 0 AND expenseDateMillis >= :sinceMillis " +
+            "GROUP BY yearMonth ORDER BY yearMonth ASC"
+    )
+    fun observeAllMonthlyExpenseTotals(sinceMillis: Long): Flow<List<MonthlyTotalRow>>
+
+    @Query(
+        "SELECT strftime('%Y-%m', expenseDateMillis / 1000, 'unixepoch', 'localtime') AS yearMonth, " +
+            "COALESCE(SUM(amount), 0.0) AS total " +
+            "FROM expenses " +
+            "WHERE businessId IN (:businessIds) AND isDeleted = 0 AND expenseDateMillis >= :sinceMillis " +
+            "GROUP BY yearMonth ORDER BY yearMonth ASC"
+    )
+    fun observeMonthlyExpenseTotalsForBusinesses(businessIds: List<String>, sinceMillis: Long): Flow<List<MonthlyTotalRow>>
 
     @Query("SELECT * FROM expenses WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): ExpenseEntity?
@@ -138,4 +219,7 @@ interface ExpenseDao {
 
     @Query("SELECT COUNT(*) FROM expenses WHERE syncStatus = 'PENDING'")
     fun observePendingCount(): Flow<Int>
+
+    @Query("DELETE FROM expenses")
+    suspend fun deleteAll()
 }

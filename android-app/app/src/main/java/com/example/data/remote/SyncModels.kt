@@ -17,6 +17,60 @@ data class HealthResponse(
 )
 
 @JsonClass(generateAdapter = true)
+data class AuthUserDto(
+    val id: String,
+    val name: String,
+    val email: String,
+    val roleId: String = "",
+    val roleName: String = "",
+    val permissions: List<String> = emptyList(),
+    val allowedBusinessIds: List<String> = emptyList()
+)
+
+@JsonClass(generateAdapter = true)
+data class LoginRequest(
+    val email: String,
+    val password: String,
+    val deviceId: String = ""
+)
+
+@JsonClass(generateAdapter = true)
+data class RegisterRequest(
+    val name: String,
+    val email: String,
+    val password: String,
+    val businessName: String,
+    val businessType: String = "GENERAL",
+    val themeKey: String = "OCEAN",
+    val currencySymbol: String = "Rs.",
+    val deviceId: String = ""
+)
+
+@JsonClass(generateAdapter = true)
+data class AuthResponse(
+    val success: Boolean = false,
+    val message: String? = null,
+    val token: String? = null,
+    val user: AuthUserDto? = null,
+    val businessId: String? = null,
+    val serverTime: Long? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class MeResponse(
+    val success: Boolean = false,
+    val message: String? = null,
+    val user: AuthUserDto? = null,
+    val serverTime: Long? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class LogoutResponse(
+    val success: Boolean = true,
+    val message: String? = null
+)
+
+@JsonClass(generateAdapter = true)
 data class BusinessDto(
     val id: String,
     val name: String,
@@ -25,7 +79,18 @@ data class BusinessDto(
     val email: String = "",
     val address: String = "",
     val taxId: String = "",
-    val invoicePrefix: String = "HA",
+    val invoicePrefix: String = "BM",
+    val themeKey: String = "OCEAN",
+    val businessType: String = "GENERAL",
+    val currencySymbol: String = "Rs.",
+    val trackExpiry: Boolean = false,
+    val trackBatch: Boolean = false,
+    val batchFieldLabel: String = "Batch / Lot",
+    val packSizeLabel: String = "Unit / Size",
+    val productCategoriesJson: String = "",
+    val expenseCategoriesJson: String = "",
+    val paymentMethodsJson: String = "",
+    val pricingTierLabelsJson: String = "",
     val defaultTaxRate: Double = 0.0,
     val invoiceFooter: String = "",
     val createdAt: Long = 0L,
@@ -39,7 +104,7 @@ data class ProductDto(
     val businessId: String,
     val name: String,
     val brand: String = "",
-    val category: String = "Insecticide",
+    val category: String = "General",
     val packSize: String = "",
     val barcode: String = "",
     val batchNumber: String = "",
@@ -51,6 +116,8 @@ data class ProductDto(
     val distributorPrice: Double = 0.0,
     val wholesalerPrice: Double = 0.0,
     val retailPrice: Double = 0.0,
+    val performedById: String = "",
+    val performedByName: String = "",
     val updatedAt: Long = 0L,
     val isDeleted: Boolean = false
 )
@@ -89,6 +156,8 @@ data class InvoiceDto(
     val balanceDue: Double = 0.0,
     val isReturned: Boolean = false,
     val notes: String = "",
+    val performedById: String = "",
+    val performedByName: String = "",
     val createdAt: Long = 0L,
     val updatedAt: Long = 0L,
     val isDeleted: Boolean = false,
@@ -105,6 +174,8 @@ data class ExpenseDto(
     val paymentMethod: String = "Cash",
     val payee: String = "",
     val notes: String = "",
+    val performedById: String = "",
+    val performedByName: String = "",
     val expenseDateMillis: Long = 0L,
     val updatedAt: Long = 0L,
     val isDeleted: Boolean = false
@@ -130,6 +201,7 @@ data class SyncPushResponse(
 @JsonClass(generateAdapter = true)
 data class SyncPullResponse(
     val serverTime: Long = System.currentTimeMillis(),
+    val user: AuthUserDto? = null,
     val businesses: List<BusinessDto> = emptyList(),
     val products: List<ProductDto> = emptyList(),
     val invoices: List<InvoiceDto> = emptyList(),
@@ -146,6 +218,17 @@ fun BusinessEntity.toDto() = BusinessDto(
     address = address,
     taxId = taxId,
     invoicePrefix = invoicePrefix,
+    themeKey = themeKey,
+    businessType = businessType,
+    currencySymbol = currencySymbol,
+    trackExpiry = trackExpiry,
+    trackBatch = trackBatch,
+    batchFieldLabel = batchFieldLabel,
+    packSizeLabel = packSizeLabel,
+    productCategoriesJson = productCategoriesJson,
+    expenseCategoriesJson = expenseCategoriesJson,
+    paymentMethodsJson = paymentMethodsJson,
+    pricingTierLabelsJson = pricingTierLabelsJson,
     defaultTaxRate = defaultTaxRate,
     invoiceFooter = invoiceFooter,
     createdAt = createdAt,
@@ -162,6 +245,17 @@ fun BusinessDto.toEntity(existingLogoPath: String? = null) = BusinessEntity(
     address = address,
     taxId = taxId,
     invoicePrefix = invoicePrefix,
+    themeKey = themeKey.ifBlank { "OCEAN" },
+    businessType = businessType.ifBlank { "GENERAL" },
+    currencySymbol = currencySymbol.ifBlank { "Rs." },
+    trackExpiry = trackExpiry,
+    trackBatch = trackBatch,
+    batchFieldLabel = batchFieldLabel.ifBlank { "Batch / Lot" },
+    packSizeLabel = packSizeLabel.ifBlank { "Unit / Size" },
+    productCategoriesJson = productCategoriesJson,
+    expenseCategoriesJson = expenseCategoriesJson,
+    paymentMethodsJson = paymentMethodsJson,
+    pricingTierLabelsJson = pricingTierLabelsJson,
     defaultTaxRate = defaultTaxRate,
     invoiceFooter = invoiceFooter,
     logoFilePath = existingLogoPath,
@@ -188,6 +282,8 @@ fun ProductEntity.toDto() = ProductDto(
     distributorPrice = distributorPrice,
     wholesalerPrice = wholesalerPrice,
     retailPrice = retailPrice,
+    performedById = performedById,
+    performedByName = performedByName,
     updatedAt = updatedAt,
     isDeleted = isDeleted
 )
@@ -209,6 +305,8 @@ fun ProductDto.toEntity() = ProductEntity(
     distributorPrice = distributorPrice,
     wholesalerPrice = wholesalerPrice,
     retailPrice = retailPrice,
+    performedById = performedById,
+    performedByName = performedByName,
     updatedAt = updatedAt,
     isDeleted = isDeleted,
     syncStatus = SyncStatus.SYNCED.name
@@ -234,6 +332,8 @@ fun InvoiceWithItems.toDto() = InvoiceDto(
     balanceDue = invoice.balanceDue,
     isReturned = invoice.isReturned,
     notes = invoice.notes,
+    performedById = invoice.performedById,
+    performedByName = invoice.performedByName,
     createdAt = invoice.createdAt,
     updatedAt = invoice.updatedAt,
     isDeleted = invoice.isDeleted,
@@ -273,6 +373,8 @@ fun InvoiceDto.toEntityPair(): Pair<InvoiceEntity, List<InvoiceItemEntity>> {
         balanceDue = balanceDue,
         isReturned = isReturned,
         notes = notes,
+        performedById = performedById,
+        performedByName = performedByName,
         createdAt = createdAt,
         updatedAt = updatedAt,
         isDeleted = isDeleted,
@@ -303,6 +405,8 @@ fun ExpenseEntity.toDto() = ExpenseDto(
     paymentMethod = paymentMethod,
     payee = payee,
     notes = notes,
+    performedById = performedById,
+    performedByName = performedByName,
     expenseDateMillis = expenseDateMillis,
     updatedAt = updatedAt,
     isDeleted = isDeleted
@@ -317,6 +421,8 @@ fun ExpenseDto.toEntity() = ExpenseEntity(
     paymentMethod = paymentMethod,
     payee = payee,
     notes = notes,
+    performedById = performedById,
+    performedByName = performedByName,
     expenseDateMillis = expenseDateMillis,
     updatedAt = updatedAt,
     isDeleted = isDeleted,

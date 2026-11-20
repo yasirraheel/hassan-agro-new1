@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.AppDatabase
+import com.example.data.local.AuthSession
 import com.example.data.local.BusinessEntity
 import com.example.data.local.ExpenseEntity
 import com.example.data.local.ExpiryStatus
@@ -12,6 +13,7 @@ import com.example.data.local.InvoiceEntity
 import com.example.data.local.InvoiceItemEntity
 import com.example.data.local.InvoicePaymentStatus
 import com.example.data.local.InvoiceWithItems
+import com.example.data.local.MonthlyTotalRow
 import com.example.data.local.PaymentMethod
 import com.example.data.local.PreferencesStore
 import com.example.data.local.PricingTier
@@ -50,6 +52,11 @@ enum class InventoryFilter(val label: String) {
     EXPIRED("Expired"),
     LOW_STOCK("Low Stock")
 }
+
+data class AuthUiState(
+    val isLoading: Boolean = false,
+    val errorMessage: String? = null
+)
 
 data class SyncUiState(
     val isSyncing: Boolean = false,
@@ -130,23 +137,37 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var realtimeSocket: WebSocket? = null
     private var periodicSyncJob: Job? = null
 
-    private val defaultBusiness = BusinessEntity(
+    private val fallbackBusiness = BusinessEntity(
         id = AppDatabase.DEFAULT_BUSINESS_ID,
-        name = "Hassan Agro",
-        tagline = "Crop Protection & Agri Inputs",
-        invoicePrefix = "HA",
+        name = "My Business",
+        tagline = "Retail & Wholesale Management",
+        invoicePrefix = "BM",
+        themeKey = "OCEAN",
+        businessType = "GENERAL",
         defaultTaxRate = 0.0
     )
 
-    val businesses: StateFlow<List<BusinessEntity>> = repository.businessesFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), listOf(defaultBusiness))
+    val authSession: StateFlow<AuthSession> = repository.authSessionFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, AuthSession())
+
+    private val _authUiState = MutableStateFlow(AuthUiState())
+    val authUiState: StateFlow<AuthUiState> = _authUiState.asStateFlow()
+
+    // Strictly scope visible businesses to the authenticated admin's allowedBusinessIds
+    val businesses: StateFlow<List<BusinessEntity>> = combine(
+        repository.businessesFlow,
+        authSession
+    ) { all, session ->
+        if (!session.isLoggedIn) emptyList()
+        else all.filter { session.canAccessBusiness(it.id) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val activeBusiness: StateFlow<BusinessEntity> = combine(
-        repository.businessesFlow,
+        businesses,
         repository.activeBusinessIdFlow
     ) { list, activeId ->
-        list.firstOrNull { it.id == activeId } ?: list.firstOrNull() ?: defaultBusiness
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), defaultBusiness)
+        list.firstOrNull { it.id == activeId } ?: list.firstOrNull() ?: fallbackBusiness
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), fallbackBusiness)
 
     val products: StateFlow<List<ProductEntity>> = activeBusiness
         .flatMapLatest { repository.observeProducts(it.id) }
@@ -160,13 +181,41 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         .flatMapLatest { repository.observeExpenses(it.id) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val allProducts: StateFlow<List<ProductEntity>> = repository.allProductsFlow
+    val allProducts: StateFlow<List<ProductEntity>> = combine(
+        repository.allProductsFlow,
+        authSession
+    ) { list, session -> list.filter { session.canAccessBusiness(it.businessId) } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val allInvoices: StateFlow<List<InvoiceWithItems>> = repository.allInvoicesFlow
+    val allInvoices: StateFlow<List<InvoiceWithItems>> = combine(
+        repository.allInvoicesFlow,
+        authSession
+    ) { list, session -> list.filter { session.canAccessBusiness(it.invoice.businessId) } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val allExpenses: StateFlow<List<ExpenseEntity>> = repository.allExpensesFlow
+    val allExpenses: StateFlow<List<ExpenseEntity>> = combine(
+        repository.allExpensesFlow,
+        authSession
+    ) { list, session -> list.filter { session.canAccessBusiness(it.businessId) } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Room SQL-aggregated monthly income & expense series for the Reports growth charts
+    private val reportSinceMillis: Long = Formatters.sixMonthsAgoMillis()
+
+    val activeMonthlySalesTotals: StateFlow<List<MonthlyTotalRow>> = activeBusiness
+        .flatMapLatest { repository.observeMonthlySalesTotals(it.id, reportSinceMillis) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val activeMonthlyExpenseTotals: StateFlow<List<MonthlyTotalRow>> = activeBusiness
+        .flatMapLatest { repository.observeMonthlyExpenseTotals(it.id, reportSinceMillis) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val allMonthlySalesTotals: StateFlow<List<MonthlyTotalRow>> = authSession
+        .flatMapLatest { session -> repository.observeAllMonthlySalesTotals(session.allowedBusinessIds, reportSinceMillis) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val allMonthlyExpenseTotals: StateFlow<List<MonthlyTotalRow>> = authSession
+        .flatMapLatest { session -> repository.observeAllMonthlyExpenseTotals(session.allowedBusinessIds, reportSinceMillis) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val pendingSyncCount: StateFlow<Int> = repository.pendingSyncCountFlow
@@ -196,35 +245,114 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     init {
         viewModelScope.launch {
             repository.ensureInitialized()
+            repository.refreshSession()
         }
-        // Sync default tax rate into empty billing draft whenever active business changes
         viewModelScope.launch {
             activeBusiness.collect { biz ->
+                val defaultMethod = biz.paymentMethods().firstOrNull() ?: PaymentMethod.CASH.label
                 _billingDraft.update { draft ->
                     if (draft.cartLines.isEmpty()) {
                         draft.copy(
                             taxEnabled = biz.defaultTaxRate > 0.0,
-                            taxRateText = if (biz.defaultTaxRate > 0.0) biz.defaultTaxRate.toString() else "0"
+                            taxRateText = if (biz.defaultTaxRate > 0.0) biz.defaultTaxRate.toString() else "0",
+                            paymentMethod = defaultMethod
                         )
                     } else {
                         draft
                     }
                 }
+                if (!biz.trackExpiry && (_inventoryFilter.value == InventoryFilter.EXPIRED || _inventoryFilter.value == InventoryFilter.EXPIRING_SOON)) {
+                    _inventoryFilter.value = InventoryFilter.ALL
+                }
             }
         }
-        // Manage optional realtime WebSocket listener + periodic REST polling (for Laravel/shared hosting)
         viewModelScope.launch {
-            serverConfig.collect { cfg ->
-                reconnectWebSocket(cfg)
-                restartPeriodicSync(cfg)
+            combine(serverConfig, authSession) { cfg, session -> cfg to session }
+                .collect { (cfg, session) ->
+                    if (session.isLoggedIn) {
+                        reconnectWebSocket(cfg, session.authToken)
+                        restartPeriodicSync(cfg)
+                    } else {
+                        periodicSyncJob?.cancel()
+                        periodicSyncJob = null
+                        realtimeSocket?.close(1000, "Logged out")
+                        realtimeSocket = null
+                    }
+                }
+        }
+    }
+
+    // --- Authentication ---
+    fun clearAuthError() {
+        _authUiState.update { it.copy(errorMessage = null) }
+    }
+
+    fun login(serverUrl: String, email: String, password: String) {
+        if (_authUiState.value.isLoading) return
+        viewModelScope.launch {
+            _authUiState.update { it.copy(isLoading = true, errorMessage = null) }
+            val result = repository.login(serverUrl, email, password)
+            _authUiState.update {
+                it.copy(
+                    isLoading = false,
+                    errorMessage = if (result.success) null else result.message
+                )
             }
+            if (result.success) {
+                emitMessage(result.message)
+            }
+        }
+    }
+
+    fun register(
+        serverUrl: String,
+        name: String,
+        email: String,
+        password: String,
+        businessName: String,
+        businessType: String,
+        themeKey: String,
+        currencySymbol: String
+    ) {
+        if (_authUiState.value.isLoading) return
+        viewModelScope.launch {
+            _authUiState.update { it.copy(isLoading = true, errorMessage = null) }
+            val result = repository.register(
+                serverBaseUrl = serverUrl,
+                name = name,
+                email = email,
+                password = password,
+                businessName = businessName,
+                businessType = businessType,
+                themeKey = themeKey,
+                currencySymbol = currencySymbol
+            )
+            _authUiState.update {
+                it.copy(
+                    isLoading = false,
+                    errorMessage = if (result.success) null else result.message
+                )
+            }
+            if (result.success) {
+                emitMessage(result.message)
+            }
+        }
+    }
+
+    fun logout() {
+        viewModelScope.launch {
+            repository.logout()
+            _billingDraft.value = BillingDraftState()
+            _heldCarts.value = emptyList()
+            _generatedInvoice.value = null
+            _authUiState.value = AuthUiState()
         }
     }
 
     private fun restartPeriodicSync(cfg: ServerSyncConfig) {
         periodicSyncJob?.cancel()
         periodicSyncJob = null
-        if (cfg.autoSyncEnabled && cfg.isConfigured) {
+        if (cfg.autoSyncEnabled && cfg.isConfigured && authSession.value.isLoggedIn) {
             periodicSyncJob = viewModelScope.launch {
                 syncNow(silent = true)
                 while (isActive) {
@@ -235,14 +363,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun reconnectWebSocket(cfg: ServerSyncConfig) {
+    private fun reconnectWebSocket(cfg: ServerSyncConfig, authToken: String) {
         realtimeSocket?.close(1000, "Reconfiguring")
         realtimeSocket = null
         _syncUiState.update { it.copy(wsConnected = false) }
         if (cfg.autoSyncEnabled && cfg.wsUrl.isNotBlank()) {
             realtimeSocket = CustomServerClientFactory.openRealtimeSyncSocket(
                 wsUrl = cfg.wsUrl,
-                apiToken = cfg.apiToken,
+                apiToken = authToken.ifBlank { cfg.apiToken },
                 deviceId = cfg.deviceId,
                 onSyncSignal = { syncNow(silent = true) },
                 onStatusChanged = { connected ->
@@ -315,7 +443,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun saveProduct(product: ProductEntity) {
         viewModelScope.launch {
             val bizId = activeBusiness.value.id
-            repository.saveProduct(product.copy(businessId = bizId))
+            val actor = authSession.value
+            repository.saveProduct(
+                product = product.copy(businessId = bizId),
+                performedById = actor.userId,
+                performedByName = actor.userName
+            )
             emitMessage("Saved ${product.name}")
             triggerAutoSyncIfEnabled()
         }
@@ -328,7 +461,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         newExpiryMillis: Long
     ) {
         viewModelScope.launch {
-            repository.restockProduct(productId, addQty, newBatchNumber, newExpiryMillis)
+            val actor = authSession.value
+            repository.restockProduct(
+                productId = productId,
+                addQty = addQty,
+                newBatchNumber = newBatchNumber,
+                newExpiryMillis = newExpiryMillis,
+                performedById = actor.userId,
+                performedByName = actor.userName
+            )
             emitMessage("Added $addQty units to stock")
             triggerAutoSyncIfEnabled()
         }
@@ -403,8 +544,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun addProductToCart(product: ProductEntity) {
-        if (Formatters.expiryStatus(product.expiryDateMillis) == ExpiryStatus.EXPIRED) {
-            emitMessage("Warning: ${product.name} (Batch ${product.batchNumber}) is EXPIRED!")
+        if (activeBusiness.value.trackExpiry && Formatters.expiryStatus(product.expiryDateMillis) == ExpiryStatus.EXPIRED) {
+            emitMessage("Warning: ${product.name} is EXPIRED!")
         }
         _billingDraft.update { draft ->
             val existingIdx = draft.cartLines.indexOfFirst { it.product.id == product.id }
@@ -448,21 +589,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearBillingDraft() {
-        val defaultTax = activeBusiness.value.defaultTaxRate
+        val biz = activeBusiness.value
+        val defaultTax = biz.defaultTaxRate
+        val defaultMethod = biz.paymentMethods().firstOrNull() ?: PaymentMethod.CASH.label
         _billingDraft.value = BillingDraftState(
             taxEnabled = defaultTax > 0.0,
-            taxRateText = if (defaultTax > 0.0) defaultTax.toString() else "0"
+            taxRateText = if (defaultTax > 0.0) defaultTax.toString() else "0",
+            paymentMethod = defaultMethod
         )
     }
 
     fun finalizeInvoiceAndGeneratePdf() {
         val draft = _billingDraft.value
         if (draft.cartLines.isEmpty()) {
-            emitMessage("Add at least one pesticide product to complete a POS sale")
+            emitMessage("Add at least one product to complete a POS sale")
             return
         }
         viewModelScope.launch {
             val business = activeBusiness.value
+            val actor = authSession.value
             val invoiceNumber = repository.nextInvoiceNumber(business)
             val invoiceId = UUID.randomUUID().toString()
             val invoiceEntity = InvoiceEntity(
@@ -484,7 +629,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 amountPaid = draft.appliedPaidAmount,
                 balanceDue = draft.balanceDue,
                 isReturned = false,
-                notes = draft.notes.trim()
+                notes = draft.notes.trim(),
+                performedById = actor.userId,
+                performedByName = actor.userName
             )
             val items = draft.cartLines.map { line ->
                 InvoiceItemEntity(
@@ -498,22 +645,29 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     lineTotal = line.lineTotal
                 )
             }
-            val saved = repository.createInvoiceAndDeductStock(invoiceEntity, items)
+            val saved = repository.createInvoiceAndDeductStock(
+                invoice = invoiceEntity,
+                items = items,
+                performedById = actor.userId,
+                performedByName = actor.userName
+            )
             val pdfFile = withContext(Dispatchers.IO) {
                 InvoicePdfGenerator.generateInvoicePdf(getApplication(), business, saved)
             }
             clearBillingDraft()
             _generatedInvoice.value = GeneratedInvoiceEvent(business, saved, pdfFile)
-            emitMessage("POS Sale $invoiceNumber completed & stock deducted")
+            emitMessage("POS Sale $invoiceNumber completed by ${actor.userName.ifBlank { "Admin" }}")
             triggerAutoSyncIfEnabled()
         }
     }
 
     fun recordInvoicePayment(invoiceId: String, amount: Double) {
         viewModelScope.launch {
-            val updated = repository.recordInvoicePayment(invoiceId, amount)
+            val actor = authSession.value
+            val currency = activeBusiness.value.resolvedCurrency()
+            val updated = repository.recordInvoicePayment(invoiceId, amount, actor.userId, actor.userName)
             if (updated != null) {
-                emitMessage("Collected ${Formatters.formatPkr(amount)} on ${updated.invoice.invoiceNumber}")
+                emitMessage("Collected ${Formatters.formatPkr(amount, currency)} on ${updated.invoice.invoiceNumber}")
                 triggerAutoSyncIfEnabled()
             }
         }
@@ -521,7 +675,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun returnInvoiceAndRestock(invoiceId: String) {
         viewModelScope.launch {
-            val ok = repository.returnInvoiceAndRestock(invoiceId)
+            val actor = authSession.value
+            val ok = repository.returnInvoiceAndRestock(invoiceId, actor.userId, actor.userName)
             if (ok) {
                 emitMessage("Sale returned & inventory stock restored")
                 triggerAutoSyncIfEnabled()
@@ -548,8 +703,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun saveExpense(expense: ExpenseEntity) {
         viewModelScope.launch {
             val bizId = activeBusiness.value.id
-            repository.saveExpense(expense.copy(businessId = bizId))
-            emitMessage("Expense saved")
+            val actor = authSession.value
+            repository.saveExpense(
+                expense = expense.copy(businessId = bizId),
+                performedById = actor.userId,
+                performedByName = actor.userName
+            )
+            emitMessage("Expense saved by ${actor.userName.ifBlank { "Admin" }}")
             triggerAutoSyncIfEnabled()
         }
     }
@@ -684,7 +844,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     lastError = if (result.success) null else result.message
                 )
             }
-            if (!silent) {
+            if (!silent || result.unauthorized) {
                 emitMessage(result.message)
             }
         }
@@ -692,7 +852,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun triggerAutoSyncIfEnabled() {
         val cfg = serverConfig.value
-        if (cfg.autoSyncEnabled && cfg.isConfigured) {
+        if (cfg.autoSyncEnabled && cfg.isConfigured && authSession.value.isLoggedIn) {
             syncNow(silent = true)
         }
     }
