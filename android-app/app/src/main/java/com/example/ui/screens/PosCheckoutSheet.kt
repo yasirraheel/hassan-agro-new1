@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.PauseCircleOutline
 import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Receipt
@@ -42,6 +43,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -113,6 +115,7 @@ fun PosCheckoutSheet(
     customers: List<CustomerEntity>,
     invoices: List<InvoiceWithItems>,
     onSelectSavedCustomer: (CustomerEntity?) -> Unit,
+    onSaveCustomer: (CustomerEntity) -> Unit,
     onToggleSaveCustomer: (Boolean) -> Unit,
     onUpdateCustomer: (String, String, String) -> Unit,
     onSelectTier: (PricingTier) -> Unit,
@@ -134,6 +137,7 @@ fun PosCheckoutSheet(
         business.taxPresets()
     }
     var showCustomerPicker by remember { mutableStateOf(false) }
+    var quickCreatePrefill by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     val selectedCustomer = remember(draft.customerId, customers) {
         customers.firstOrNull { it.id == draft.customerId }
@@ -263,17 +267,37 @@ fun PosCheckoutSheet(
                 if (selectedCustomer != null) {
                     IconButton(
                         onClick = { onSelectSavedCustomer(null) },
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier
+                            .size(34.dp)
+                            .testTag("pos_checkout_unlink_customer_btn")
                     ) {
                         Icon(Icons.Default.Close, contentDescription = "Unlink customer", modifier = Modifier.size(18.dp))
                     }
                 } else {
-                    Text(
-                        text = "Pick",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "Pick",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                        FilledTonalButton(
+                            onClick = {
+                                quickCreatePrefill = draft.customerName.trim() to draft.customerPhone.trim()
+                            },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                            modifier = Modifier
+                                .height(34.dp)
+                                .testTag("pos_checkout_new_customer_btn")
+                        ) {
+                            Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("New", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
+                        }
+                    }
                 }
             }
         }
@@ -528,29 +552,67 @@ fun PosCheckoutSheet(
                 onSelectSavedCustomer(customer)
                 showCustomerPicker = false
             },
+            onSelectWalkIn = {
+                onSelectSavedCustomer(null)
+                showCustomerPicker = false
+            },
+            onCreateNewCustomer = { prefillName, prefillPhone ->
+                showCustomerPicker = false
+                quickCreatePrefill = prefillName to prefillPhone
+            },
             onDismiss = { showCustomerPicker = false }
+        )
+    }
+
+    quickCreatePrefill?.let { (prefillName, prefillPhone) ->
+        CustomerEditorDialog(
+            business = business,
+            existing = null,
+            initialName = prefillName,
+            initialPhone = prefillPhone,
+            initialTier = draft.pricingTier,
+            onSave = { newCustomer ->
+                onSaveCustomer(newCustomer)
+                onSelectSavedCustomer(newCustomer)
+                quickCreatePrefill = null
+            },
+            onDismiss = { quickCreatePrefill = null }
         )
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CustomerPickerBottomSheet(
+fun CustomerPickerBottomSheet(
     business: BusinessEntity,
     customers: List<CustomerEntity>,
     invoices: List<InvoiceWithItems>,
     selectedCustomerId: String,
     onPick: (CustomerEntity) -> Unit,
+    onCreateNewCustomer: (initialName: String, initialPhone: String) -> Unit,
+    onSelectWalkIn: (() -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val currency = business.resolvedCurrency()
     var query by remember { mutableStateOf("") }
+    val trimmedQuery = query.trim()
+    val queryLooksLikePhone = remember(trimmedQuery) {
+        trimmedQuery.isNotEmpty() &&
+            trimmedQuery.any { it.isDigit() } &&
+            trimmedQuery.all { it.isDigit() || it in "+- ()" }
+    }
     val filtered = remember(customers, query) {
         customers.filter { c ->
             query.isBlank() ||
                 c.name.contains(query, ignoreCase = true) ||
                 c.phone.contains(query, ignoreCase = true)
+        }
+    }
+    val hasExactMatch = remember(customers, trimmedQuery) {
+        trimmedQuery.isNotEmpty() && customers.any {
+            it.name.equals(trimmedQuery, ignoreCase = true) ||
+                it.phone.equals(trimmedQuery, ignoreCase = true)
         }
     }
 
@@ -567,21 +629,138 @@ private fun CustomerPickerBottomSheet(
                 .padding(bottom = 20.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text("Select Saved Customer", style = MaterialTheme.typography.titleLarge)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Select Customer",
+                    style = MaterialTheme.typography.titleLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                Button(
+                    onClick = {
+                        if (queryLooksLikePhone) onCreateNewCustomer("", trimmedQuery)
+                        else onCreateNewCustomer(trimmedQuery, "")
+                    },
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier
+                        .height(38.dp)
+                        .testTag("customer_picker_add_new_btn")
+                ) {
+                    Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("New Customer", style = MaterialTheme.typography.labelLarge, maxLines = 1, softWrap = false)
+                }
+            }
+
             CompactSearchBar(
                 value = query,
                 onValueChange = { query = it },
                 placeholder = "Search name or phone...",
                 testTagName = "customer_picker_search"
             )
+
+            // Instant inline "Create from search" card whenever typed query doesn't match an existing customer
+            if (trimmedQuery.isNotEmpty() && !hasExactMatch) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            if (queryLooksLikePhone) onCreateNewCustomer("", trimmedQuery)
+                            else onCreateNewCustomer(trimmedQuery, "")
+                        }
+                        .testTag("customer_picker_create_from_query_btn"),
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.PersonAdd,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Create \"$trimmedQuery\"",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "Save to directory & select for this POS sale",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Icon(
+                            Icons.Default.Add,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+
+            if (selectedCustomerId.isNotBlank() && onSelectWalkIn != null) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onSelectWalkIn)
+                        .testTag("customer_picker_walk_in_btn"),
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Switch back to Walk-in Customer",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Clear selected customer",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+
             if (filtered.isEmpty()) {
-                Text(
-                    text = if (customers.isEmpty()) "No saved customers yet. Add them in the Customers tab or type a walk-in name and check \"Save to Customer Directory\"."
-                    else "No customers match \"$query\".",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 12.dp)
-                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = if (customers.isEmpty()) "No saved customers yet. Tap \"New Customer\" above to create and select one right now without leaving your POS sale."
+                        else "No saved customers match \"$trimmedQuery\". Tap the card above to create them now.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             } else {
                 LazyColumn(
                     modifier = Modifier.heightIn(max = 360.dp),
@@ -593,7 +772,8 @@ private fun CustomerPickerBottomSheet(
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { onPick(customer) },
+                                .clickable { onPick(customer) }
+                                .testTag("customer_picker_item_${customer.id}"),
                             shape = MaterialTheme.shapes.medium,
                             color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
                             else MaterialTheme.colorScheme.surface,

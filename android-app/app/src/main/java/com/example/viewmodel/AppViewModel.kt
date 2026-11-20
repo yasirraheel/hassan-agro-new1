@@ -565,7 +565,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // --- Billing & Invoicing ---
     fun selectBillingCustomer(customer: CustomerEntity?) {
         if (customer == null) {
-            _billingDraft.update { it.copy(customerId = "", saveCustomerToDirectory = false) }
+            _billingDraft.update {
+                it.copy(
+                    customerId = "",
+                    customerName = "",
+                    customerPhone = "",
+                    customerEmail = "",
+                    saveCustomerToDirectory = false
+                )
+            }
             return
         }
         val preferredTier = PricingTier.fromName(customer.pricingTier)

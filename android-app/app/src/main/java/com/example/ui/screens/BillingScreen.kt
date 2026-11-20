@@ -28,9 +28,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.PauseCircleOutline
 import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PointOfSale
 import androidx.compose.material.icons.filled.QrCodeScanner
@@ -40,6 +43,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -148,8 +152,14 @@ fun BillingScreen(
     var salesFilter by remember { mutableStateOf(SalesFilter.ALL) }
     var showCheckoutSheet by remember { mutableStateOf(false) }
     var showHeldCartsSheet by remember { mutableStateOf(false) }
+    var showPosCustomerPicker by remember { mutableStateOf(false) }
+    var quickCreateCustomerPrefill by remember { mutableStateOf<Pair<String, String>?>(null) }
     var paymentTargetInvoice by remember { mutableStateOf<InvoiceWithItems?>(null) }
     var returnTargetInvoice by remember { mutableStateOf<InvoiceWithItems?>(null) }
+
+    val selectedPosCustomer = remember(draft.customerId, customers) {
+        customers.firstOrNull { it.id == draft.customerId }
+    }
 
     val cartQtyByProductId = remember(draft.cartLines) {
         draft.cartLines.associate { it.product.id to it.quantity }
@@ -274,6 +284,94 @@ fun BillingScreen(
                             )
                             Spacer(Modifier.width(5.dp))
                             Text("Scan", maxLines = 1, softWrap = false)
+                        }
+                    }
+
+                    // Active POS Customer Strip: Pick saved customer OR create a new customer on the fly
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        shape = MaterialTheme.shapes.medium,
+                        color = if (selectedPosCustomer != null) {
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                        },
+                        border = BorderStroke(
+                            width = 1.dp,
+                            color = if (selectedPosCustomer != null) {
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                            } else {
+                                MaterialTheme.colorScheme.outlineVariant
+                            }
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showPosCustomerPicker = true }
+                                .padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 6.dp)
+                                .testTag("pos_counter_customer_bar"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.People,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = selectedPosCustomer?.name
+                                        ?: draft.customerName.trim().ifBlank { "Walk-in Customer" },
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = if (selectedPosCustomer != null) {
+                                        listOf(
+                                            selectedPosCustomer.phone.ifBlank { "Saved customer" },
+                                            activeBusiness.tierLabel(PricingTier.fromName(selectedPosCustomer.pricingTier))
+                                        ).joinToString(" • ")
+                                    } else {
+                                        "Tap to select customer (${customers.size}) or add new"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            if (selectedPosCustomer != null) {
+                                IconButton(
+                                    onClick = { onSelectSavedCustomer(null) },
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .testTag("pos_counter_clear_customer_btn")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear selected customer",
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                            FilledTonalButton(
+                                onClick = { quickCreateCustomerPrefill = "" to "" },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                                modifier = Modifier
+                                    .height(34.dp)
+                                    .testTag("pos_counter_new_customer_btn")
+                            ) {
+                                Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("New", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
+                            }
                         }
                     }
 
@@ -520,6 +618,7 @@ fun BillingScreen(
             customers = customers,
             invoices = invoices,
             onSelectSavedCustomer = onSelectSavedCustomer,
+            onSaveCustomer = onSaveCustomer,
             onToggleSaveCustomer = onToggleSaveCustomer,
             onUpdateCustomer = onUpdateCustomer,
             onSelectTier = onSelectTier,
@@ -532,6 +631,44 @@ fun BillingScreen(
             onHoldCart = onHoldCart,
             onCompleteSale = onFinalizeInvoice,
             onDismiss = { showCheckoutSheet = false }
+        )
+    }
+
+    if (showPosCustomerPicker) {
+        CustomerPickerBottomSheet(
+            business = activeBusiness,
+            customers = customers,
+            invoices = invoices,
+            selectedCustomerId = draft.customerId,
+            onPick = { customer ->
+                onSelectSavedCustomer(customer)
+                showPosCustomerPicker = false
+            },
+            onSelectWalkIn = {
+                onSelectSavedCustomer(null)
+                showPosCustomerPicker = false
+            },
+            onCreateNewCustomer = { prefillName, prefillPhone ->
+                showPosCustomerPicker = false
+                quickCreateCustomerPrefill = prefillName to prefillPhone
+            },
+            onDismiss = { showPosCustomerPicker = false }
+        )
+    }
+
+    quickCreateCustomerPrefill?.let { (prefillName, prefillPhone) ->
+        CustomerEditorDialog(
+            business = activeBusiness,
+            existing = null,
+            initialName = prefillName,
+            initialPhone = prefillPhone,
+            initialTier = draft.pricingTier,
+            onSave = { newCustomer ->
+                onSaveCustomer(newCustomer)
+                onSelectSavedCustomer(newCustomer)
+                quickCreateCustomerPrefill = null
+            },
+            onDismiss = { quickCreateCustomerPrefill = null }
         )
     }
 

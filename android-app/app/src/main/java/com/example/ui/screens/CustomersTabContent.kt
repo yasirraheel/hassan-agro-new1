@@ -484,14 +484,21 @@ fun CustomerEditorDialog(
     business: BusinessEntity,
     existing: CustomerEntity?,
     onSave: (CustomerEntity) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    initialName: String = "",
+    initialPhone: String = "",
+    initialTier: PricingTier = PricingTier.RETAIL
 ) {
     val currency = business.resolvedCurrency()
-    var name by remember { mutableStateOf(existing?.name ?: "") }
-    var phone by remember { mutableStateOf(existing?.phone ?: "") }
-    var email by remember { mutableStateOf(existing?.email ?: "") }
-    var address by remember { mutableStateOf(existing?.address ?: "") }
-    var selectedTier by remember { mutableStateOf(PricingTier.fromName(existing?.pricingTier ?: PricingTier.RETAIL.name)) }
+    var name by remember(existing, initialName) { mutableStateOf(existing?.name ?: initialName) }
+    var phone by remember(existing, initialPhone) { mutableStateOf(existing?.phone ?: initialPhone) }
+    var email by remember(existing) { mutableStateOf(existing?.email ?: "") }
+    var address by remember(existing) { mutableStateOf(existing?.address ?: "") }
+    var selectedTier by remember(existing, initialTier) {
+        mutableStateOf(
+            if (existing != null) PricingTier.fromName(existing.pricingTier) else initialTier
+        )
+    }
     var openingBalance by remember {
         mutableStateOf(existing?.openingBalance?.takeIf { it > 0.0 }?.toString() ?: "")
     }

@@ -102,7 +102,7 @@ import com.example.util.Formatters
 import com.example.viewmodel.SyncUiState
 import com.example.viewmodel.TeamUiState
 
-private enum class SettingsTabKey(val label: String) {
+enum class SettingsTabKey(val label: String) {
     BUSINESSES("Business"),
     TEAM("Team & Roles"),
     SYNC("Sync")
@@ -136,6 +136,7 @@ fun SettingsScreen(
     onDeleteTeamUser: (String) -> Unit,
     onSignOut: () -> Unit,
     onBack: () -> Unit,
+    initialTab: SettingsTabKey = SettingsTabKey.BUSINESSES,
     modifier: Modifier = Modifier
 ) {
     BackHandler(onBack = onBack)
@@ -151,7 +152,9 @@ fun SettingsScreen(
         }
     }
 
-    var selectedTab by remember(availableTabs) { mutableStateOf(availableTabs.first()) }
+    var selectedTab by remember(availableTabs, initialTab) {
+        mutableStateOf(if (availableTabs.contains(initialTab)) initialTab else availableTabs.first())
+    }
     var editingBusiness by remember { mutableStateOf<BusinessEntity?>(null) }
     var showAddBusinessSheet by remember { mutableStateOf(false) }
 

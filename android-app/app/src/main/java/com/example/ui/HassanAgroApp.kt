@@ -1,5 +1,6 @@
 package com.example.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -14,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.PointOfSale
 import androidx.compose.material.icons.filled.Settings
@@ -22,10 +24,12 @@ import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.PointOfSale
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
@@ -36,6 +40,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -58,9 +63,11 @@ import androidx.navigation.compose.rememberNavController
 import com.example.R
 import com.example.data.local.AppPermission
 import com.example.data.local.ProductEntity
+import com.example.ui.components.AppNavigationDrawerSheet
 import com.example.ui.components.BarcodeScannerDialog
 import com.example.ui.components.BusinessSwitcherPill
 import com.example.ui.components.BusinessSwitcherSheet
+import com.example.ui.components.DrawerDestinationItem
 import com.example.ui.components.SyncStatusBadge
 import com.example.ui.screens.BillingScreen
 import com.example.ui.screens.BusinessProfileEditorSheet
@@ -70,6 +77,7 @@ import com.example.ui.screens.InventoryScreen
 import com.example.ui.screens.LoginScreen
 import com.example.ui.screens.ReportsScreen
 import com.example.ui.screens.SettingsScreen
+import com.example.ui.screens.SettingsTabKey
 import com.example.ui.theme.AppThemeOption
 import com.example.ui.theme.HassanAgroTheme
 import com.example.viewmodel.AppViewModel
@@ -195,12 +203,18 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
     val startRoute = remember(allowedDestinations) { allowedDestinations.first().route }
     val currentRoute = backStackEntry?.destination?.route ?: startRoute
 
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    var settingsInitialTab by remember { mutableStateOf(SettingsTabKey.BUSINESSES) }
     var showBusinessSwitcher by remember { mutableStateOf(false) }
     var showQuickAddBusiness by remember { mutableStateOf(false) }
     var activeScanTarget by remember { mutableStateOf(ScanTarget.NONE) }
     var pendingNewProductBarcode by remember { mutableStateOf<String?>(null) }
     var pendingRestockProduct by remember { mutableStateOf<ProductEntity?>(null) }
     var autoOpenAddExpense by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = drawerState.isOpen) {
+        scope.launch { drawerState.close() }
+    }
 
     LaunchedEffect(Unit) {
         viewModel.snackbarMessage.collect { msg ->
@@ -222,58 +236,138 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
         }
     }
 
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val useNavigationRail = maxWidth >= 600.dp
+    fun openSettings(tab: SettingsTabKey = SettingsTabKey.BUSINESSES) {
+        settingsInitialTab = tab
+        navController.navigate(NavRoutes.SETTINGS) {
+            launchSingleTop = true
+        }
+    }
 
-        Scaffold(
-            contentWindowInsets = WindowInsets.safeDrawing,
-            containerColor = MaterialTheme.colorScheme.background,
-            snackbarHost = { SnackbarHost(snackbarHostState) },
-            topBar = {
-                if (currentRoute != NavRoutes.SETTINGS) {
-                    TopAppBar(
-                        colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = MaterialTheme.colorScheme.background
-                        ),
-                        title = {
-                            BusinessSwitcherPill(
-                                activeBusiness = activeBusiness,
-                                businessCount = businesses.size,
-                                onClick = {
-                                    if (canManageBusinesses || businesses.size > 1) {
-                                        showBusinessSwitcher = true
-                                    }
-                                }
-                            )
-                        },
-                        actions = {
-                            SyncStatusBadge(
-                                syncState = syncState,
-                                serverConfig = serverConfig,
-                                pendingCount = pendingSyncCount,
-                                onClick = {
-                                    if (serverConfig.isConfigured) {
-                                        viewModel.syncNow()
-                                    } else {
-                                        navController.navigate(NavRoutes.SETTINGS)
-                                    }
-                                }
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            IconButton(
-                                onClick = { navController.navigate(NavRoutes.SETTINGS) },
-                                modifier = Modifier.testTag("top_bar_settings_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Settings,
-                                    contentDescription = stringResource(R.string.cd_open_settings),
-                                    tint = MaterialTheme.colorScheme.onBackground
-                                )
-                            }
-                        }
-                    )
+    val drawerDestinations = allowedDestinations.map { dest ->
+        DrawerDestinationItem(
+            route = dest.route,
+            label = stringResource(dest.labelRes),
+            selectedIcon = dest.selectedIcon,
+            unselectedIcon = dest.unselectedIcon
+        )
+    }
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        gesturesEnabled = currentRoute != NavRoutes.SETTINGS,
+        drawerContent = {
+            AppNavigationDrawerSheet(
+                activeBusiness = activeBusiness,
+                businessCount = businesses.size,
+                authSession = authSession,
+                serverConfig = serverConfig,
+                syncState = syncState,
+                pendingSyncCount = pendingSyncCount,
+                destinations = drawerDestinations,
+                currentRoute = currentRoute,
+                canInventory = canInventory,
+                canManageBusinesses = canManageBusinesses,
+                canManageTeam = canManageTeam,
+                canManageSettings = canManageSettings,
+                onNavigateRoute = { route ->
+                    scope.launch { drawerState.close() }
+                    navigateTopLevel(route)
+                },
+                onOpenSettings = { tab ->
+                    scope.launch { drawerState.close() }
+                    openSettings(tab)
+                },
+                onOpenBusinessSwitcher = {
+                    scope.launch { drawerState.close() }
+                    if (canManageBusinesses || businesses.size > 1) {
+                        showBusinessSwitcher = true
+                    }
+                },
+                onScanStockBarcode = {
+                    scope.launch { drawerState.close() }
+                    if (canInventory) {
+                        activeScanTarget = ScanTarget.STOCK_IN
+                    }
+                },
+                onSyncNow = {
+                    scope.launch { drawerState.close() }
+                    if (serverConfig.isConfigured) {
+                        viewModel.syncNow(silent = false)
+                    } else {
+                        openSettings(SettingsTabKey.SYNC)
+                    }
+                },
+                onSignOut = {
+                    scope.launch { drawerState.close() }
+                    viewModel.logout()
                 }
-            },
+            )
+        }
+    ) {
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val useNavigationRail = maxWidth >= 600.dp
+
+            Scaffold(
+                contentWindowInsets = WindowInsets.safeDrawing,
+                containerColor = MaterialTheme.colorScheme.background,
+                snackbarHost = { SnackbarHost(snackbarHostState) },
+                topBar = {
+                    if (currentRoute != NavRoutes.SETTINGS) {
+                        TopAppBar(
+                            colors = TopAppBarDefaults.topAppBarColors(
+                                containerColor = MaterialTheme.colorScheme.background
+                            ),
+                            navigationIcon = {
+                                IconButton(
+                                    onClick = { scope.launch { drawerState.open() } },
+                                    modifier = Modifier.testTag("top_bar_menu_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Menu,
+                                        contentDescription = stringResource(R.string.cd_open_drawer),
+                                        tint = MaterialTheme.colorScheme.onBackground
+                                    )
+                                }
+                            },
+                            title = {
+                                BusinessSwitcherPill(
+                                    activeBusiness = activeBusiness,
+                                    businessCount = businesses.size,
+                                    onClick = {
+                                        if (canManageBusinesses || businesses.size > 1) {
+                                            showBusinessSwitcher = true
+                                        }
+                                    }
+                                )
+                            },
+                            actions = {
+                                SyncStatusBadge(
+                                    syncState = syncState,
+                                    serverConfig = serverConfig,
+                                    pendingCount = pendingSyncCount,
+                                    onClick = {
+                                        if (serverConfig.isConfigured) {
+                                            viewModel.syncNow()
+                                        } else {
+                                            openSettings(SettingsTabKey.SYNC)
+                                        }
+                                    }
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                IconButton(
+                                    onClick = { openSettings(SettingsTabKey.BUSINESSES) },
+                                    modifier = Modifier.testTag("top_bar_settings_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Settings,
+                                        contentDescription = stringResource(R.string.cd_open_settings),
+                                        tint = MaterialTheme.colorScheme.onBackground
+                                    )
+                                }
+                            }
+                        )
+                    }
+                },
             bottomBar = {
                 if (!useNavigationRail && currentRoute != NavRoutes.SETTINGS) {
                     NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
@@ -482,13 +576,15 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
                                 onToggleTeamUser = viewModel::toggleTeamUser,
                                 onDeleteTeamUser = viewModel::deleteTeamUser,
                                 onSignOut = viewModel::logout,
-                                onBack = { navController.popBackStack() }
+                                onBack = { navController.popBackStack() },
+                                initialTab = settingsInitialTab
                             )
                         }
                     }
                 }
             }
         }
+    }
     }
 
     if (showBusinessSwitcher) {
@@ -498,7 +594,7 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
             canManageBusinesses = canManageBusinesses,
             onSelectBusiness = viewModel::switchBusiness,
             onAddNewBusiness = { showQuickAddBusiness = true },
-            onManageBusinesses = { navController.navigate(NavRoutes.SETTINGS) },
+            onManageBusinesses = { openSettings(SettingsTabKey.BUSINESSES) },
             onDismiss = { showBusinessSwitcher = false }
         )
     }

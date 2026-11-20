@@ -22,5 +22,17 @@
     <string name="cd_share_pdf">Share PDF document</string>
     <string name="cd_previous_month">Previous month</string>
     <string name="cd_next_month">Next month</string>
+    <string name="cd_open_drawer">Open navigation menu</string>
+    <string name="cd_close_drawer">Close navigation menu</string>
+    <string name="drawer_section_workspace">Workspace</string>
+    <string name="drawer_section_management">Management &amp; Tools</string>
+    <string name="drawer_settings_customization">Settings &amp; Customization</string>
+    <string name="drawer_my_account">My Account &amp; Sync</string>
+    <string name="drawer_team_roles">Team &amp; Roles</string>
+    <string name="drawer_server_sync">Server Sync</string>
+    <string name="drawer_switch_business">Switch Business</string>
+    <string name="drawer_scan_barcode">Scan Stock Barcode</string>
+    <string name="drawer_sync_now">Sync Now</string>
+    <string name="drawer_sign_out">Sign Out</string>
     <string name="camera_permission_rationale">Camera access is required to scan product barcodes and QR codes. You can also enter barcodes manually below.</string>
 </resources>
