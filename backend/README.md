@@ -6,6 +6,7 @@ This folder is a Laravel 12 + MySQL sync API for the **Hassan Agro** Android app
 - `GET /api/v1/health` — Verify connection & Bearer token
 - `POST /api/v1/sync/push` — Transactional last-write-wins upload (businesses, products, POS invoices + items, expenses)
 - `GET /api/v1/sync/pull?since=<epochMs>` — Incremental multi-device download
+- `GET /admin/login` — Admin dashboard sign-in
 
 ---
 
@@ -28,7 +29,8 @@ Each run backs up the previous files outside the web folder.
 
 ### 3. Configure `.env`
 Create `domains/hassanagro.com/public_html/ledger/.env` from `.env.example`
-and fill in your Hostinger MySQL credentials + a strong secret `SYNC_API_TOKEN`:
+and fill in your Hostinger MySQL credentials, a strong `SYNC_API_TOKEN`, and
+separate admin credentials:
 
 ```env
 APP_ENV=production
@@ -43,6 +45,10 @@ DB_USERNAME=u123456_user
 DB_PASSWORD=your_db_password
 
 SYNC_API_TOKEN=your-strong-random-token
+ADMIN_EMAIL=admin@hassanagro.com
+ADMIN_PASSWORD=your-unique-admin-password
+SESSION_DRIVER=file
+SESSION_SECURE_COOKIE=true
 ```
 
 ### 4. Install Dependencies & Create Tables

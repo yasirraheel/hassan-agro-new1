@@ -52,11 +52,13 @@ class AdminController extends Controller
             'password' => ['required', 'string'],
         ]);
 
-        $expectedEmail = (string) config('sync.admin_email', 'admin@hassanagro.com');
-        $expectedPass = (string) config('sync.admin_password', 'HassanAgro@2026');
+        $expectedEmail = (string) config('sync.admin_email', '');
+        $expectedPass = (string) config('sync.admin_password', '');
 
         if (
-            hash_equals(strtolower($expectedEmail), strtolower(trim((string) $request->input('email'))))
+            $expectedEmail !== ''
+            && $expectedPass !== ''
+            && hash_equals(strtolower($expectedEmail), strtolower(trim((string) $request->input('email'))))
             && hash_equals($expectedPass, (string) $request->input('password'))
         ) {
             $request->session()->regenerate();

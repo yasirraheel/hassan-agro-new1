@@ -6,6 +6,7 @@ android-app/.idea/
 .DS_Store
 /android-app/build
 /android-app/captures
+/android-app/gradle/gradle-daemon-jvm.properties
 .externalNativeBuild
 .cxx
 local.properties

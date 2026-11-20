@@ -44,6 +44,7 @@ rsync -a --delete \
 
 mkdir -p "$TARGET/bootstrap/cache" \
     "$TARGET/storage/framework/cache" \
+    "$TARGET/storage/framework/cache/data" \
     "$TARGET/storage/framework/sessions" \
     "$TARGET/storage/framework/views" \
     "$TARGET/storage/logs"
