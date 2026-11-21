@@ -229,9 +229,10 @@ class SyncController extends Controller
 
                 DB::table('invoices')->updateOrInsert(['id' => (string) $inv['id']], $invPayload);
 
+                $hasItemCostCol = Schema::hasColumn('invoice_items', 'cost_price');
                 DB::table('invoice_items')->where('invoice_id', $inv['id'])->delete();
                 foreach ($inv['items'] ?? [] as $item) {
-                    DB::table('invoice_items')->insert([
+                    $itemRow = [
                         'id' => (string) $item['id'],
                         'invoice_id' => (string) $inv['id'],
                         'product_id' => (string) ($item['productId'] ?? ''),
@@ -241,7 +242,11 @@ class SyncController extends Controller
                         'quantity' => (int) ($item['quantity'] ?? 1),
                         'unit_price' => (float) ($item['unitPrice'] ?? 0),
                         'line_total' => (float) ($item['lineTotal'] ?? 0),
-                    ]);
+                    ];
+                    if ($hasItemCostCol) {
+                        $itemRow['cost_price'] = (float) ($item['costPrice'] ?? 0);
+                    }
+                    DB::table('invoice_items')->insert($itemRow);
                 }
             }
 
@@ -412,6 +417,7 @@ class SyncController extends Controller
                 'batchNumber' => (string) ($it->batch_number ?? ''),
                 'quantity' => (int) $it->quantity,
                 'unitPrice' => (float) $it->unit_price,
+                'costPrice' => (float) ($it->cost_price ?? 0),
                 'lineTotal' => (float) $it->line_total,
             ])->values();
 

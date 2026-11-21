@@ -71,7 +71,11 @@
                         <td class="num">{{ $b->currency_symbol ?? 'Rs.' }} {{ number_format((float)($expenseSums[$b->id] ?? 0), 0) }}</td>
                         <td style="text-align:right; white-space:nowrap;">
                             <button type="button" class="btn btn-sm" onclick='openBusinessModal(@json($bObj))'>Customize / Edit</button>
-                            <form method="POST" action="{{ route('admin.businesses.delete', $b->id) }}" style="display:inline;" onsubmit="return confirm('Remove {{ addslashes($b->name) }}?')">
+                            <form method="POST" action="{{ route('admin.businesses.delete', $b->id) }}" style="display:inline;"
+                                  data-confirm-title="Remove Business"
+                                  data-confirm-item="{{ $b->name }}"
+                                  data-confirm-message="This business will be archived and hidden across the Admin Panel and synced mobile devices."
+                                  data-confirm-btn="Remove Business">
                                 @csrf
                                 @method('DELETE')
                                 <button type="submit" class="btn btn-sm btn-danger">Delete</button>

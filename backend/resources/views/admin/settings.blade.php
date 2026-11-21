@@ -113,7 +113,7 @@ function copyField(id) {
     el.select();
     navigator.clipboard?.writeText(el.value);
     el.type = prev;
-    alert('Copied to clipboard!');
+    showToast('Copied to clipboard!');
 }
 </script>
 @endpush

@@ -1088,10 +1088,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             .filter { it.expenseDateMillis in startMs until endMs }
         val scopeProducts = if (allBusinessesScope) allProducts.value else products.value
 
-        val grossSales = scopeInvoices.sumOf { it.invoice.grandTotal }
-        val totalExpenses = scopeExpenses.sumOf { it.amount }
+        val pl = com.example.util.ProfitLossCalculator.calculate(
+            products = scopeProducts,
+            invoices = scopeInvoices,
+            expenses = scopeExpenses
+        )
         val taxCollected = scopeInvoices.sumOf { it.invoice.taxAmount }
-        val stockValue = scopeProducts.sumOf { it.stockQty * it.purchasePrice }
         val expiringCount = scopeProducts.count { Formatters.expiryStatus(it.expiryDateMillis) == ExpiryStatus.EXPIRING_SOON }
         val expiredCount = scopeProducts.count { Formatters.expiryStatus(it.expiryDateMillis) == ExpiryStatus.EXPIRED }
 
@@ -1101,15 +1103,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             business = biz,
             scopeTitle = scopeTitle,
             monthLabel = Formatters.formatMonthYear(year, monthZeroBased),
-            grossSales = grossSales,
-            totalExpenses = totalExpenses,
-            netProfit = grossSales - totalExpenses,
+            grossSales = pl.totalSales,
+            totalExpenses = pl.operatingExpenses,
+            netProfit = pl.netProfit,
             taxCollected = taxCollected,
-            stockValuation = stockValue,
+            stockValuation = pl.inventoryCostValuation,
             invoiceCount = scopeInvoices.size,
             expiringCount = expiringCount,
             expiredCount = expiredCount,
-            expenses = scopeExpenses
+            expenses = scopeExpenses,
+            costOfGoodsSold = pl.costOfGoodsSold,
+            grossProfit = pl.grossProfit,
+            stockPurchaseSpend = pl.stockPurchaseSpend,
+            inventoryRetailValue = pl.inventoryRetailValuation
         )
     }
 

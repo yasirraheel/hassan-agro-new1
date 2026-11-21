@@ -66,7 +66,11 @@
                         <td style="font-size:12px; color:var(--muted);">{{ $c->performed_by_name ?: '—' }}</td>
                         <td style="text-align:right; white-space:nowrap;">
                             <button type="button" class="btn btn-sm" onclick='openCustomerModal(@json($c))'>Edit</button>
-                            <form method="POST" action="{{ route('admin.customers.delete', $c->id) }}" style="display:inline;" onsubmit="return confirm('Delete customer {{ addslashes($c->name) }}?')">
+                            <form method="POST" action="{{ route('admin.customers.delete', $c->id) }}" style="display:inline;"
+                                  data-confirm-title="Delete Customer"
+                                  data-confirm-item="{{ $c->name }}"
+                                  data-confirm-message="Remove this customer from the active directory? Historical invoices will stay preserved."
+                                  data-confirm-btn="Delete Customer">
                                 @csrf
                                 @method('DELETE')
                                 <button type="submit" class="btn btn-sm btn-danger">Delete</button>

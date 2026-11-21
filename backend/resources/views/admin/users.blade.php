@@ -80,7 +80,11 @@
                                     @csrf
                                     <button type="submit" class="btn btn-sm">{{ $u->is_active ? 'Disable' : 'Enable' }}</button>
                                 </form>
-                                <form method="POST" action="{{ route('admin.users.delete', $u->id) }}" style="display:inline;" onsubmit="return confirm('Delete user {{ addslashes($u->name) }}?')">
+                                <form method="POST" action="{{ route('admin.users.delete', $u->id) }}" style="display:inline;"
+                                      data-confirm-title="Delete Staff Account"
+                                      data-confirm-item="{{ $u->name }} ({{ $u->email }})"
+                                      data-confirm-message="This account will be permanently deleted and immediately signed out from all connected phones."
+                                      data-confirm-btn="Delete User">
                                     @csrf
                                     @method('DELETE')
                                     <button type="submit" class="btn btn-sm btn-danger">Delete</button>

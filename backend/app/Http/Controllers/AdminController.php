@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\ProfitLossService;
 use App\Services\RbacService;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
@@ -15,8 +16,10 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AdminController extends Controller
 {
-    public function __construct(private readonly RbacService $rbac)
-    {
+    public function __construct(
+        private readonly RbacService $rbac,
+        private readonly ProfitLossService $pl
+    ) {
     }
 
     private function activeBusinesses()
@@ -137,31 +140,34 @@ class AdminController extends Controller
         $nowMs = $this->rbac->nowMs();
         $thirtyDaysMs = $nowMs + (30 * 86400 * 1000);
 
-        $invQuery = DB::table('invoices')->where('is_deleted', false)->where('is_returned', false);
-        $expQuery = DB::table('expenses')->where('is_deleted', false);
-        $prodQuery = DB::table('products')->where('is_deleted', false);
-
-        if ($selectedBizId !== '') {
-            $invQuery->where('business_id', $selectedBizId);
-            $expQuery->where('business_id', $selectedBizId);
-            $prodQuery->where('business_id', $selectedBizId);
+        $periodLabels = ProfitLossService::PERIOD_LABELS;
+        if ($request->has('period')) {
+            $reqPeriod = strtolower((string) $request->query('period', 'month'));
+            $selectedPeriod = array_key_exists($reqPeriod, $periodLabels) ? $reqPeriod : 'month';
+            $request->session()->put('admin_dashboard_period', $selectedPeriod);
+        } else {
+            $selectedPeriod = (string) $request->session()->get('admin_dashboard_period', 'month');
+            if (!array_key_exists($selectedPeriod, $periodLabels)) {
+                $selectedPeriod = 'month';
+            }
         }
 
-        $totalRevenue = (float) (clone $invQuery)->sum('grand_total');
-        $totalCollected = (float) (clone $invQuery)->sum('amount_paid');
-        $totalCreditDue = (float) (clone $invQuery)->sum('balance_due');
-        $invoiceCount = (int) (clone $invQuery)->count();
-        $totalExpenses = (float) (clone $expQuery)->sum('amount');
-        $netProfit = $totalRevenue - $totalExpenses;
+        [$startMs, $endMs] = $this->pl->periodBounds($selectedPeriod);
+        $pl = $this->pl->summarize($selectedBizId, $startMs, $endMs, $nowMs);
 
-        $products = $prodQuery->get();
-        $totalProducts = $products->count();
-        $totalUnits = (int) $products->sum('stock_qty');
-        $lowStockCount = $products->filter(fn ($p) => (int) $p->stock_qty <= (int) $p->low_stock_threshold)->count();
-        $expiredCount = $products->filter(fn ($p) => (int) $p->expiry_date_millis > 0 && (int) $p->expiry_date_millis < $nowMs)->count();
-        $expiringSoonCount = $products->filter(
-            fn ($p) => (int) $p->expiry_date_millis >= $nowMs && (int) $p->expiry_date_millis <= $thirtyDaysMs
-        )->count();
+        $totalRevenue = $pl['totalSales'];
+        $totalCollected = $pl['totalCollected'];
+        $totalCreditDue = $pl['totalCreditDue'];
+        $invoiceCount = $pl['invoiceCount'];
+        $totalExpenses = $pl['operatingExpenses'];
+        $netProfit = $pl['netProfit'];
+
+        $products = $pl['products'];
+        $totalProducts = $pl['totalProducts'];
+        $totalUnits = $pl['totalUnits'];
+        $lowStockCount = $pl['lowStockCount'];
+        $expiredCount = $pl['expiredCount'];
+        $expiringSoonCount = $pl['expiringSoonCount'];
 
         $activeStaffCount = DB::table('app_users')->where('is_active', true)->count();
 
@@ -174,12 +180,14 @@ class AdminController extends Controller
         $recentInvoices = DB::table('invoices')
             ->where('is_deleted', false)
             ->when($selectedBizId !== '', fn ($q) => $q->where('business_id', $selectedBizId))
+            ->when($startMs !== null && $endMs !== null, fn ($q) => $q->whereBetween('created_at_ms', [$startMs, $endMs]))
             ->orderByDesc('created_at_ms')
             ->limit(8)
             ->get();
 
         return view('admin.dashboard', compact(
             'businesses', 'bizMap', 'selectedBizId', 'activeTheme',
+            'selectedPeriod', 'periodLabels', 'pl',
             'totalRevenue', 'totalCollected', 'totalCreditDue', 'invoiceCount',
             'totalExpenses', 'netProfit', 'totalProducts', 'totalUnits',
             'lowStockCount', 'expiredCount', 'expiringSoonCount', 'activeStaffCount',
@@ -631,31 +639,59 @@ class AdminController extends Controller
             if ($retailPrice <= 0) $retailPrice = $suggested['retail'];
         }
 
+        $stockQty = (int) $data['stock_qty'];
+        $productName = trim($data['name']);
+        $adminId = $this->currentAdminId($request);
+        $adminName = $this->currentAdminName($request);
+
         DB::table('products')->insert([
             'id' => (string) Str::uuid(),
             'business_id' => $data['business_id'],
-            'name' => trim($data['name']),
+            'name' => $productName,
             'brand' => (string) ($data['brand'] ?? ''),
             'category' => $data['category'],
             'pack_size' => (string) ($data['pack_size'] ?? ''),
             'barcode' => (string) ($data['barcode'] ?? ''),
             'batch_number' => (string) ($data['batch_number'] ?? ''),
             'expiry_date_millis' => $expiryMs,
-            'stock_qty' => (int) $data['stock_qty'],
+            'stock_qty' => $stockQty,
             'low_stock_threshold' => (int) $data['low_stock_threshold'],
             'purchase_price' => $purchasePrice,
             'mrp_price' => $mrpPrice,
             'distributor_price' => $distPrice,
             'wholesaler_price' => $whlsPrice,
             'retail_price' => $retailPrice,
-            'performed_by_id' => $this->currentAdminId($request),
-            'performed_by_name' => $this->currentAdminName($request),
+            'performed_by_id' => $adminId,
+            'performed_by_name' => $adminName,
             'updated_at_ms' => $now,
             'server_modified_at_ms' => $now,
             'is_deleted' => false,
         ]);
 
-        return redirect()->route('admin.products')->with('success', 'Product added and queued for sync.');
+        $totalStockCost = $stockQty * $purchasePrice;
+        $loggedExpenseMsg = '';
+        if ($request->boolean('record_stock_expense') && $totalStockCost > 0) {
+            $payMethod = trim((string) $request->input('purchase_payment_method', 'Cash')) ?: 'Cash';
+            DB::table('expenses')->insert([
+                'id' => (string) Str::uuid(),
+                'business_id' => $data['business_id'],
+                'title' => "Stock Purchase: {$productName} ({$stockQty} × " . number_format($purchasePrice, 2) . ')',
+                'category' => 'Stock Purchase',
+                'amount' => $totalStockCost,
+                'payment_method' => $payMethod,
+                'payee' => (string) ($data['brand'] ?? ''),
+                'notes' => "Auto-logged when adding {$stockQty} units of {$productName}",
+                'performed_by_id' => $adminId,
+                'performed_by_name' => $adminName,
+                'expense_date_millis' => Carbon::now()->startOfDay()->getTimestampMs(),
+                'updated_at_ms' => $now,
+                'server_modified_at_ms' => $now,
+                'is_deleted' => false,
+            ]);
+            $loggedExpenseMsg = ' & Stock Purchase expense (Rs. ' . number_format($totalStockCost, 0) . ') logged.';
+        }
+
+        return redirect()->route('admin.products')->with('success', 'Product added and queued for sync' . $loggedExpenseMsg);
     }
 
     public function updateProduct(Request $request, string $id): RedirectResponse
@@ -708,23 +744,63 @@ class AdminController extends Controller
 
     public function adjustStock(Request $request, string $id): RedirectResponse
     {
-        $request->validate(['delta' => ['required', 'integer']]);
+        $request->validate([
+            'delta' => ['required', 'integer'],
+            'unit_cost' => ['nullable', 'numeric', 'min:0'],
+            'purchase_payment_method' => ['nullable', 'string', 'max:64'],
+        ]);
         $product = DB::table('products')->where('id', $id)->first();
         if (!$product) {
             return back()->with('error', 'Product not found.');
         }
 
-        $newQty = max(0, (int) $product->stock_qty + (int) $request->input('delta'));
+        $delta = (int) $request->input('delta');
+        $newQty = max(0, (int) $product->stock_qty + $delta);
         $now = $this->rbac->nowMs();
-        DB::table('products')->where('id', $id)->update([
+        $adminId = $this->currentAdminId($request);
+        $adminName = $this->currentAdminName($request);
+
+        $unitCost = $request->filled('unit_cost')
+            ? (float) $request->input('unit_cost')
+            : (float) ($product->purchase_price ?? 0);
+
+        $updatePayload = [
             'stock_qty' => $newQty,
-            'performed_by_id' => $this->currentAdminId($request),
-            'performed_by_name' => $this->currentAdminName($request),
+            'performed_by_id' => $adminId,
+            'performed_by_name' => $adminName,
             'updated_at_ms' => $now,
             'server_modified_at_ms' => $now,
-        ]);
+        ];
+        if ($delta > 0 && $request->filled('unit_cost') && $unitCost > 0) {
+            $updatePayload['purchase_price'] = $unitCost;
+        }
 
-        return back()->with('success', "Stock for {$product->name} updated to {$newQty}.");
+        DB::table('products')->where('id', $id)->update($updatePayload);
+
+        $extraMsg = '';
+        if ($delta > 0 && $request->boolean('record_stock_expense') && $unitCost > 0) {
+            $totalCost = $delta * $unitCost;
+            $payMethod = trim((string) $request->input('purchase_payment_method', 'Cash')) ?: 'Cash';
+            DB::table('expenses')->insert([
+                'id' => (string) Str::uuid(),
+                'business_id' => (string) $product->business_id,
+                'title' => "Stock Restock: {$product->name} (+{$delta} × " . number_format($unitCost, 2) . ')',
+                'category' => 'Stock Purchase',
+                'amount' => $totalCost,
+                'payment_method' => $payMethod,
+                'payee' => (string) ($product->brand ?? ''),
+                'notes' => "Restocked +{$delta} units via Admin Panel",
+                'performed_by_id' => $adminId,
+                'performed_by_name' => $adminName,
+                'expense_date_millis' => Carbon::now()->startOfDay()->getTimestampMs(),
+                'updated_at_ms' => $now,
+                'server_modified_at_ms' => $now,
+                'is_deleted' => false,
+            ]);
+            $extraMsg = ' & Stock Purchase spend (Rs. ' . number_format($totalCost, 0) . ') logged.';
+        }
+
+        return back()->with('success', "Stock for {$product->name} updated to {$newQty}{$extraMsg}");
     }
 
     public function deleteProduct(Request $request, string $id): RedirectResponse
@@ -1430,36 +1506,26 @@ class AdminController extends Controller
         $startMs = Carbon::createFromFormat('Y-m', $month)->startOfMonth()->getTimestampMs();
         $endMs = Carbon::createFromFormat('Y-m', $month)->endOfMonth()->getTimestampMs();
 
-        $invQ = DB::table('invoices')
-            ->where('is_deleted', false)
-            ->where('is_returned', false)
-            ->whereBetween('created_at_ms', [$startMs, $endMs])
-            ->when($selectedBizId !== '', fn ($q) => $q->where('business_id', $selectedBizId));
+        $pl = $this->pl->summarize($selectedBizId, $startMs, $endMs);
+        $invoices = $pl['invoices'];
+        $expenses = $pl['expenses'];
 
-        $expQ = DB::table('expenses')
-            ->where('is_deleted', false)
-            ->whereBetween('expense_date_millis', [$startMs, $endMs])
-            ->when($selectedBizId !== '', fn ($q) => $q->where('business_id', $selectedBizId));
+        $salesTotal = $pl['totalSales'];
+        $taxTotal = $pl['taxTotal'];
+        $discountTotal = $pl['discountTotal'];
+        $cashCollected = $pl['totalCollected'];
+        $creditOutstanding = $pl['totalCreditDue'];
+        $expensesTotal = $pl['operatingExpenses'];
+        $netProfit = $pl['netProfit'];
 
-        $invoices = $invQ->get();
-        $expenses = $expQ->get();
-
-        $salesTotal = (float) $invoices->sum('grand_total');
-        $taxTotal = (float) $invoices->sum('tax_amount');
-        $discountTotal = (float) $invoices->sum('discount_amount');
-        $cashCollected = (float) $invoices->sum('amount_paid');
-        $creditOutstanding = (float) $invoices->sum('balance_due');
-        $expensesTotal = (float) $expenses->sum('amount');
-        $netProfit = $salesTotal - $expensesTotal;
-
-        $expensesByCategory = $expenses->groupBy('category')->map(fn ($g) => (float) $g->sum('amount'))->sortDesc();
+        $expensesByCategory = $pl['expensesByCategory'];
         $salesByPayment = $invoices->groupBy('payment_method')->map(fn ($g) => (float) $g->sum('grand_total'))->sortDesc();
         $salesByTier = $invoices->groupBy('pricing_tier')->map(fn ($g) => (float) $g->sum('grand_total'))->sortDesc();
         $salesByAdmin = $invoices->groupBy(fn ($i) => $i->performed_by_name ?: 'Unassigned')
             ->map(fn ($g) => (float) $g->sum('grand_total'))->sortDesc();
 
         return view('admin.reports', compact(
-            'businesses', 'bizMap', 'selectedBizId', 'activeTheme', 'month',
+            'businesses', 'bizMap', 'selectedBizId', 'activeTheme', 'month', 'pl',
             'invoices', 'expenses', 'salesTotal', 'taxTotal', 'discountTotal',
             'cashCollected', 'creditOutstanding', 'expensesTotal', 'netProfit',
             'expensesByCategory', 'salesByPayment', 'salesByTier', 'salesByAdmin'

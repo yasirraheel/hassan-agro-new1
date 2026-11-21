@@ -9,21 +9,30 @@
     .inv-mode-btn { padding: 6px 12px; border: none; border-radius: 7px; font-size: 12.5px; font-weight: 700; cursor: pointer; background: transparent; color: var(--muted); }
     .inv-mode-btn.active { background: var(--primary); color: #fff; }
 
-    /* Minimal Compact A4 Style */
+    /* Truly Minimal, Compact, Easy-to-Read Invoice Card */
     .a4-card {
-        max-width: 720px;
+        max-width: 560px;
         margin: 0 auto;
-        background: #fff;
-        border: 1px solid #e5e7eb;
-        border-radius: 10px;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
         overflow: hidden;
-        box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
+        box-shadow: 0 4px 20px rgba(15, 23, 42, 0.08);
     }
-    .a4-accent-bar { height: 4px; background: var(--primary); }
-    .a4-inner { padding: 24px 28px; font-size: 12.5px; color: #1f2937; }
-    .a4-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    .a4-table th { background: #f8fafc; color: #64748b; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; padding: 7px 8px; border-bottom: 1px solid #e5e7eb; }
-    .a4-table td { padding: 7px 8px; border-bottom: 1px solid #f1f5f9; }
+    .a4-accent-bar { height: 3px; background: var(--primary); }
+    .a4-inner { padding: 20px 24px 18px; font-size: 13px; color: #0f172a; line-height: 1.45; }
+    .a4-status-pill {
+        display: inline-block;
+        padding: 2px 9px;
+        border-radius: 999px;
+        font-size: 10.5px;
+        font-weight: 800;
+        letter-spacing: 0.4px;
+    }
+    .a4-table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 4px; }
+    .a4-table th { background: #f8fafc !important; color: #475569 !important; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 7px 8px; border-bottom: 1px solid #cbd5e1; }
+    .a4-table td { padding: 8px 8px; border-bottom: 1px solid #f1f5f9; color: #0f172a !important; background: transparent !important; }
+    .a4-table tbody tr:nth-child(even) td { background: #f8fafc !important; }
 
     /* 80mm Thermal Coupon Receipt Style with Serrated Zig-Zag Bottom */
     .thermal-wrap {
@@ -67,7 +76,13 @@
             <button type="button" class="btn" onclick="openModal('collectModal')">💵 Collect Credit</button>
         @endif
         @if(!$invoice->is_returned)
-            <form method="POST" action="{{ route('admin.invoices.return', $invoice->id) }}" onsubmit="return confirm('Return this sale and restore product stock?')">
+            <form method="POST" action="{{ route('admin.invoices.return', $invoice->id) }}"
+                  data-confirm-title="Return Sale & Restock?"
+                  data-confirm-item="{{ $invoice->invoice_number }} · {{ $invoice->customer_name }}"
+                  data-confirm-message="This will mark the invoice as Returned, zero its balance due, and restore all billed item quantities back into stock."
+                  data-confirm-btn="Return & Restock"
+                  data-confirm-variant="warn"
+                  data-confirm-icon="↩️">
                 @csrf
                 <button type="submit" class="btn btn-danger">↩ Return &amp; Restock</button>
             </form>
@@ -137,45 +152,46 @@
     <div class="thermal-zig-zag"></div>
 </div>
 
-{{-- 2. ULTRA-MINIMAL COMPACT COLORED A4 INVOICE --}}
+{{-- 2. COMPACT MINIMAL COLORED PDF INVOICE --}}
+@php
+    $statusBg = $invoice->is_returned ? '#e2e8f0' : ($invoice->payment_status === 'PAID' ? '#dcfce7' : ($invoice->payment_status === 'PARTIAL' ? '#fef3c7' : '#fee2e2'));
+    $statusFg = $invoice->is_returned ? '#475569' : ($invoice->payment_status === 'PAID' ? '#15803d' : ($invoice->payment_status === 'PARTIAL' ? '#b45309' : '#b91c1c'));
+    $statusTxt = $invoice->is_returned ? 'RETURNED' : strtoupper((string) $invoice->payment_status);
+@endphp
 <div id="minimalView" class="a4-card" style="display:none;">
     <div class="a4-accent-bar"></div>
     <div class="a4-inner">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; border-bottom:1px solid #e5e7eb; padding-bottom:12px; margin-bottom:14px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:14px; border-bottom:1px solid #e2e8f0; padding-bottom:12px; margin-bottom:12px;">
             <div>
-                <h2 style="margin:0; font-size:16px; font-weight:700; color:var(--primary);">{{ $business->name ?? 'Business Manager' }}</h2>
-                @if(!empty($business->tagline))<div style="font-size:11px; color:#6b7280;">{{ $business->tagline }}</div>@endif
-                <div style="font-size:11px; color:#6b7280; margin-top:3px;">
-                    {{ $business->address ?? '' }} {{ !empty($business->phone) ? ' · ' . $business->phone : '' }} {{ !empty($business->tax_id) ? ' · Tax: ' . $business->tax_id : '' }}
+                <h2 style="margin:0; font-size:17px; font-weight:800; color:#0f172a; letter-spacing:-0.2px;">{{ $business->name ?? 'Business Manager' }}</h2>
+                @if(!empty($business->tagline))<div style="font-size:11.5px; color:#64748b;">{{ $business->tagline }}</div>@endif
+                <div style="font-size:11px; color:#64748b; margin-top:2px;">
+                    {{ collect([$business->phone ?? '', $business->address ?? '', !empty($business->tax_id) ? 'Tax: ' . $business->tax_id : ''])->filter()->implode(' · ') }}
                 </div>
             </div>
-            <div style="text-align:right;">
-                <div style="font-size:13px; font-weight:700; color:#111827;">{{ $invoice->invoice_number }}</div>
-                <div style="font-size:11px; color:#6b7280;">{{ $invoice->created_at_ms > 0 ? \Carbon\Carbon::createFromTimestampMs($invoice->created_at_ms)->format('d M Y, h:i A') : '' }}</div>
-                @if(!empty($invoice->performed_by_name))
-                    <div style="font-size:11px; color:var(--primary); font-weight:600; margin-top:2px;">By: {{ $invoice->performed_by_name }}</div>
-                @endif
+            <div style="text-align:right; flex-shrink:0;">
+                <div style="font-size:14px; font-weight:800; color:#0f172a;">{{ $invoice->invoice_number }}</div>
+                <div style="font-size:11px; color:#64748b; margin-bottom:5px;">{{ $invoice->created_at_ms > 0 ? \Carbon\Carbon::createFromTimestampMs($invoice->created_at_ms)->format('d M Y · h:i A') : '' }}</div>
+                <span class="a4-status-pill" style="background:{{ $statusBg }}; color:{{ $statusFg }};">{{ $statusTxt }}</span>
             </div>
         </div>
 
-        <div style="display:flex; justify-content:space-between; font-size:11.5px; margin-bottom:14px;">
+        <div style="display:flex; justify-content:space-between; gap:12px; font-size:12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:9px 12px; margin-bottom:12px;">
             <div>
-                <span style="color:#6b7280; text-transform:uppercase; font-size:10px; font-weight:700;">Billed To</span><br>
-                <strong>{{ $invoice->customer_name }}</strong>
-                @if($invoice->customer_phone) <span style="color:#6b7280;">· {{ $invoice->customer_phone }}</span>@endif
+                <div style="color:#64748b; text-transform:uppercase; font-size:9.5px; font-weight:700; letter-spacing:0.4px;">Customer</div>
+                <div style="font-weight:700; color:#0f172a;">{{ $invoice->customer_name }}@if($invoice->customer_phone) <span style="font-weight:500; color:#475569;">· {{ $invoice->customer_phone }}</span>@endif</div>
             </div>
             <div style="text-align:right;">
-                <span style="color:#6b7280; text-transform:uppercase; font-size:10px; font-weight:700;">Payment</span><br>
-                <span>{{ $invoice->pricing_tier }} · {{ $invoice->payment_method }} · <strong>{{ $invoice->payment_status }}</strong></span>
+                <div style="color:#64748b; text-transform:uppercase; font-size:9.5px; font-weight:700; letter-spacing:0.4px;">Payment &amp; Staff</div>
+                <div style="color:#0f172a;">{{ $invoice->payment_method }} · {{ $invoice->pricing_tier }}@if(!empty($invoice->performed_by_name)) · <strong>{{ $invoice->performed_by_name }}</strong>@endif</div>
             </div>
         </div>
 
         <table class="a4-table">
             <thead>
                 <tr>
-                    <th style="width:28px;">#</th>
+                    <th style="width:24px;">#</th>
                     <th>Item</th>
-                    <th>Spec</th>
                     <th style="text-align:right;">Qty</th>
                     <th style="text-align:right;">Rate</th>
                     <th style="text-align:right;">Amount</th>
@@ -184,35 +200,38 @@
             <tbody>
                 @foreach($items as $idx => $item)
                     <tr>
-                        <td style="color:#6b7280;">{{ $idx + 1 }}</td>
-                        <td style="font-weight:600;">{{ $item->product_name }}</td>
-                        <td style="color:#6b7280;">{{ trim(($item->pack_size ?? '') . ' ' . ($item->batch_number ? '· ' . $item->batch_number : '')) ?: '—' }}</td>
+                        <td style="color:#64748b !important;">{{ $idx + 1 }}</td>
+                        <td>
+                            <div style="font-weight:700; color:#0f172a;">{{ $item->product_name }}</div>
+                            @php $meta = trim(($item->pack_size ?? '') . (!empty($item->batch_number) ? ' · ' . $item->batch_number : '')); @endphp
+                            @if($meta !== '')<div style="font-size:10.5px; color:#64748b;">{{ $meta }}</div>@endif
+                        </td>
                         <td class="num" style="text-align:right;">{{ $item->quantity }}</td>
                         <td class="num" style="text-align:right;">{{ number_format($item->unit_price, 2) }}</td>
-                        <td class="num" style="text-align:right; font-weight:600;">{{ number_format($item->line_total, 2) }}</td>
+                        <td class="num" style="text-align:right; font-weight:700;">{{ number_format($item->line_total, 2) }}</td>
                     </tr>
                 @endforeach
             </tbody>
         </table>
 
-        <div style="max-width:240px; margin-left:auto; margin-top:14px; font-size:12px;">
-            <div style="display:flex; justify-content:space-between; padding:3px 0;"><span style="color:#6b7280;">Subtotal</span><span class="num">{{ number_format($invoice->subtotal, 2) }}</span></div>
+        <div style="max-width:235px; margin-left:auto; margin-top:12px; font-size:12.5px;">
+            <div style="display:flex; justify-content:space-between; padding:3px 0;"><span style="color:#64748b;">Subtotal</span><span class="num">{{ number_format($invoice->subtotal, 2) }}</span></div>
             @if($invoice->discount_amount > 0)
-                <div style="display:flex; justify-content:space-between; padding:3px 0;"><span style="color:#6b7280;">Discount</span><span class="num">-{{ number_format($invoice->discount_amount, 2) }}</span></div>
+                <div style="display:flex; justify-content:space-between; padding:3px 0;"><span style="color:#64748b;">Discount</span><span class="num">-{{ number_format($invoice->discount_amount, 2) }}</span></div>
             @endif
             @if($invoice->tax_enabled)
-                <div style="display:flex; justify-content:space-between; padding:3px 0;"><span style="color:#6b7280;">Tax ({{ number_format($invoice->tax_rate_percent, 1) }}%)</span><span class="num">{{ number_format($invoice->tax_amount, 2) }}</span></div>
+                <div style="display:flex; justify-content:space-between; padding:3px 0;"><span style="color:#64748b;">Tax ({{ number_format($invoice->tax_rate_percent, 1) }}%)</span><span class="num">{{ number_format($invoice->tax_amount, 2) }}</span></div>
             @endif
-            <div style="display:flex; justify-content:space-between; padding:6px 0; margin-top:4px; border-top:1px solid #d1d5db; font-size:13.5px; font-weight:700; color:var(--primary);">
-                <span>Grand Total</span><span class="num">{{ $currency }} {{ number_format($invoice->grand_total, 2) }}</span>
+            <div style="display:flex; justify-content:space-between; padding:8px 10px; margin:6px -10px 4px; background:#f8fafc; border:1px solid #cbd5e1; border-radius:8px; font-size:14px; font-weight:800; color:#0f172a;">
+                <span>Total</span><span class="num">{{ $currency }} {{ number_format($invoice->grand_total, 2) }}</span>
             </div>
-            <div style="display:flex; justify-content:space-between; padding:2px 0; font-size:11.5px;"><span style="color:#6b7280;">Paid</span><span class="num">{{ $currency }} {{ number_format($invoice->amount_paid, 2) }}</span></div>
+            <div style="display:flex; justify-content:space-between; padding:2px 0; font-size:12px;"><span style="color:#64748b;">Paid</span><span class="num">{{ $currency }} {{ number_format($invoice->amount_paid, 2) }}</span></div>
             @if($invoice->balance_due > 0 && !$invoice->is_returned)
-                <div style="display:flex; justify-content:space-between; padding:2px 0; font-size:12px; font-weight:700; color:var(--danger);"><span>Balance Due</span><span class="num">{{ $currency }} {{ number_format($invoice->balance_due, 2) }}</span></div>
+                <div style="display:flex; justify-content:space-between; padding:2px 0; font-size:12.5px; font-weight:800; color:#b91c1c;"><span>Balance Due</span><span class="num">{{ $currency }} {{ number_format($invoice->balance_due, 2) }}</span></div>
             @endif
         </div>
 
-        <div style="margin-top:18px; padding-top:10px; border-top:1px solid #f1f5f9; font-size:10.5px; color:#6b7280; text-align:center;">
+        <div style="margin-top:14px; padding-top:10px; border-top:1px solid #e2e8f0; font-size:11px; color:#64748b; text-align:center;">
             {{ $business->invoice_footer ?: 'Thank you for your business!' }}
         </div>
     </div>

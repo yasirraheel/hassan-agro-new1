@@ -233,6 +233,7 @@ data class InvoiceItemDto(
     val batchNumber: String = "",
     val quantity: Int,
     val unitPrice: Double,
+    val costPrice: Double = 0.0,
     val lineTotal: Double
 )
 
@@ -493,6 +494,7 @@ fun InvoiceWithItems.toDto() = InvoiceDto(
             batchNumber = it.batchNumber,
             quantity = it.quantity,
             unitPrice = it.unitPrice,
+            costPrice = it.costPrice,
             lineTotal = it.lineTotal
         )
     }
@@ -537,6 +539,7 @@ fun InvoiceDto.toEntityPair(): Pair<InvoiceEntity, List<InvoiceItemEntity>> {
             batchNumber = it.batchNumber,
             quantity = it.quantity,
             unitPrice = it.unitPrice,
+            costPrice = it.costPrice,
             lineTotal = it.lineTotal
         )
     }

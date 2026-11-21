@@ -22,12 +22,16 @@ return [
     ],
 
     'themes' => [
-        'OCEAN'   => ['label' => 'Ocean Blue',    'primary' => '#0D47A1', 'accent' => '#1565C0', 'soft' => '#E3F2FD'],
-        'EMERALD' => ['label' => 'Emerald Green', 'primary' => '#1B5E20', 'accent' => '#2E7D32', 'soft' => '#E6F4EA'],
-        'INDIGO'  => ['label' => 'Royal Indigo',  'primary' => '#311B92', 'accent' => '#512DA8', 'soft' => '#EDE7F6'],
-        'AMBER'   => ['label' => 'Warm Amber',    'primary' => '#B45309', 'accent' => '#D97706', 'soft' => '#FEF3C7'],
-        'CRIMSON' => ['label' => 'Ruby Red',      'primary' => '#991B1B', 'accent' => '#DC2626', 'soft' => '#FEE2E2'],
-        'TEAL'    => ['label' => 'Deep Teal',     'primary' => '#0F766E', 'accent' => '#0D9488', 'soft' => '#CCFBF1'],
+        'OCEAN'   => ['label' => 'Ocean Blue',    'primary' => '#0D47A1', 'accent' => '#1565C0', 'soft' => '#E3F2FD', 'dark_primary' => '#60A5FA', 'dark_accent' => '#3B82F6', 'dark_soft' => 'rgba(96, 165, 250, 0.16)'],
+        'EMERALD' => ['label' => 'Emerald Green', 'primary' => '#1B5E20', 'accent' => '#2E7D32', 'soft' => '#E6F4EA', 'dark_primary' => '#4ADE80', 'dark_accent' => '#22C55E', 'dark_soft' => 'rgba(74, 222, 128, 0.16)'],
+        'INDIGO'  => ['label' => 'Royal Indigo',  'primary' => '#311B92', 'accent' => '#512DA8', 'soft' => '#EDE7F6', 'dark_primary' => '#818CF8', 'dark_accent' => '#6366F1', 'dark_soft' => 'rgba(129, 140, 248, 0.16)'],
+        'AMBER'   => ['label' => 'Warm Amber',    'primary' => '#B45309', 'accent' => '#D97706', 'soft' => '#FEF3C7', 'dark_primary' => '#FBBF24', 'dark_accent' => '#F59E0B', 'dark_soft' => 'rgba(251, 191, 36, 0.16)'],
+        'CRIMSON' => ['label' => 'Ruby Red',      'primary' => '#991B1B', 'accent' => '#DC2626', 'soft' => '#FEE2E2', 'dark_primary' => '#F87171', 'dark_accent' => '#EF4444', 'dark_soft' => 'rgba(248, 113, 113, 0.16)'],
+        'TEAL'    => ['label' => 'Deep Teal',     'primary' => '#0F766E', 'accent' => '#0D9488', 'soft' => '#CCFBF1', 'dark_primary' => '#2DD4BF', 'dark_accent' => '#14B8A6', 'dark_soft' => 'rgba(45, 212, 191, 0.16)'],
+        'VIOLET'  => ['label' => 'Electric Violet','primary' => '#6D28D9', 'accent' => '#7C3AED', 'soft' => '#F3E8FF', 'dark_primary' => '#A78BFA', 'dark_accent' => '#8B5CF6', 'dark_soft' => 'rgba(167, 139, 250, 0.16)'],
+        'ROSE'    => ['label' => 'Velvet Rose',   'primary' => '#BE123C', 'accent' => '#E11D48', 'soft' => '#FFE4E6', 'dark_primary' => '#FB7185', 'dark_accent' => '#F43F5E', 'dark_soft' => 'rgba(251, 113, 133, 0.16)'],
+        'SLATE'   => ['label' => 'Graphite Slate','primary' => '#334155', 'accent' => '#475569', 'soft' => '#F1F5F9', 'dark_primary' => '#94A3B8', 'dark_accent' => '#64748B', 'dark_soft' => 'rgba(148, 163, 184, 0.18)'],
+        'GOLD'    => ['label' => 'Imperial Gold', 'primary' => '#A16207', 'accent' => '#CA8A04', 'soft' => '#FEF9C3', 'dark_primary' => '#FACC15', 'dark_accent' => '#EAB308', 'dark_soft' => 'rgba(250, 204, 21, 0.16)'],
     ],
 
     'business_presets' => [

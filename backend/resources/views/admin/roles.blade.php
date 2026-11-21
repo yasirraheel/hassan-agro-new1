@@ -44,7 +44,11 @@
                         <td style="text-align:right; white-space:nowrap;">
                             @if(!$role->is_system)
                                 <button type="button" class="btn btn-sm" onclick='openRoleModal(@json($role))'>Edit</button>
-                                <form method="POST" action="{{ route('admin.roles.delete', $role->id) }}" style="display:inline;" onsubmit="return confirm('Delete role {{ addslashes($role->name) }}?')">
+                                <form method="POST" action="{{ route('admin.roles.delete', $role->id) }}" style="display:inline;"
+                                      data-confirm-title="Delete Role"
+                                      data-confirm-item="{{ $role->name }}"
+                                      data-confirm-message="Permanently delete this custom role? Only roles with zero assigned users can be deleted."
+                                      data-confirm-btn="Delete Role">
                                     @csrf
                                     @method('DELETE')
                                     <button type="submit" class="btn btn-sm btn-danger">Delete</button>

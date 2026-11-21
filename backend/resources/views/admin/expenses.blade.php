@@ -55,7 +55,11 @@
                         <td class="num" style="text-align:right; color:var(--danger); font-weight:700;">Rs. {{ number_format($e->amount, 0) }}</td>
                         <td style="text-align:right; white-space:nowrap;">
                             <button type="button" class="btn btn-sm" onclick='openExpenseModal(@json($eJson))'>Edit</button>
-                            <form method="POST" action="{{ route('admin.expenses.delete', $e->id) }}" style="display:inline;" onsubmit="return confirm('Delete this expense?')">
+                            <form method="POST" action="{{ route('admin.expenses.delete', $e->id) }}" style="display:inline;"
+                                  data-confirm-title="Delete Expense Entry"
+                                  data-confirm-item="{{ $e->title }} · Rs. {{ number_format($e->amount, 0) }}"
+                                  data-confirm-message="This expense record will be removed from your P&L ledger and synced to mobile devices."
+                                  data-confirm-btn="Delete Expense">
                                 @csrf
                                 @method('DELETE')
                                 <button type="submit" class="btn btn-sm btn-danger">Delete</button>
