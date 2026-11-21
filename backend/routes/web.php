@@ -70,5 +70,11 @@ Route::prefix('admin')->name('admin.')->group(function () {
         Route::put('/settings/account', [AdminController::class, 'updateAdminAccount'])->name('settings.account');
         Route::put('/settings/smtp', [AdminController::class, 'updateSmtpSettings'])->name('settings.smtp');
         Route::post('/settings/smtp/test', [AdminController::class, 'sendTestSmtpEmail'])->name('settings.smtp.test');
+        Route::put('/settings/app-security', [AdminController::class, 'updateAppSecurityToggle'])->name('settings.app_security.toggle');
+        Route::post('/settings/apps', [AdminController::class, 'storeAuthorizedApp'])->name('settings.apps.store');
+        Route::post('/settings/apps/{id}/rotate', [AdminController::class, 'rotateAuthorizedAppKey'])->name('settings.apps.rotate');
+        Route::post('/settings/apps/{id}/toggle', [AdminController::class, 'toggleAuthorizedApp'])->name('settings.apps.toggle');
+        Route::post('/settings/apps/{id}/cert', [AdminController::class, 'updateAuthorizedAppCert'])->name('settings.apps.cert');
+        Route::delete('/settings/apps/{id}', [AdminController::class, 'deleteAuthorizedApp'])->name('settings.apps.delete');
     });
 });

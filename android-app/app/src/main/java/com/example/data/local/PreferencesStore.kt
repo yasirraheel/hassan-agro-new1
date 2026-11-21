@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.util.AppSecurityVault
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -27,16 +28,11 @@ enum class ThemeAppearanceMode(val key: String, val label: String) {
 }
 
 data class ServerSyncConfig(
-    val serverBaseUrl: String = PreferencesStore.DEFAULT_SERVER_URL,
-    val apiToken: String = "",
-    val wsUrl: String = "",
     val deviceId: String = "",
     val autoSyncEnabled: Boolean = true,
-    val lastSyncTimestamp: Long = 0L
-) {
-    val isConfigured: Boolean
-        get() = serverBaseUrl.trim().startsWith("http://") || serverBaseUrl.trim().startsWith("https://")
-}
+    val lastSyncTimestamp: Long = 0L,
+    val isConfigured: Boolean = true
+)
 
 data class AuthSession(
     val isLoggedIn: Boolean = false,
@@ -61,20 +57,13 @@ data class AuthSession(
 }
 
 class PreferencesStore(private val context: Context) {
-    companion object {
-        const val DEFAULT_SERVER_URL = "https://ledger.hassanagro.com/"
-    }
-
     private object Keys {
         val ACTIVE_BUSINESS_ID = stringPreferencesKey("active_business_id")
-        val SERVER_BASE_URL = stringPreferencesKey("server_base_url")
-        val API_TOKEN = stringPreferencesKey("api_token")
-        val WS_URL = stringPreferencesKey("ws_url")
         val DEVICE_ID = stringPreferencesKey("device_id")
         val AUTO_SYNC = booleanPreferencesKey("auto_sync_enabled")
         val LAST_SYNC_TS = longPreferencesKey("last_sync_timestamp")
 
-        // Server-authenticated admin session
+        // Server-authenticated user session
         val AUTH_TOKEN = stringPreferencesKey("auth_token")
         val AUTH_USER_ID = stringPreferencesKey("auth_user_id")
         val AUTH_USER_NAME = stringPreferencesKey("auth_user_name")
@@ -100,14 +89,11 @@ class PreferencesStore(private val context: Context) {
     }
 
     val serverConfigFlow: Flow<ServerSyncConfig> = context.dataStore.data.map { prefs ->
-        val rawUrl = prefs[Keys.SERVER_BASE_URL].orEmpty().trim()
         ServerSyncConfig(
-            serverBaseUrl = rawUrl.ifBlank { DEFAULT_SERVER_URL },
-            apiToken = prefs[Keys.API_TOKEN] ?: "",
-            wsUrl = prefs[Keys.WS_URL] ?: "",
             deviceId = prefs[Keys.DEVICE_ID] ?: "",
             autoSyncEnabled = prefs[Keys.AUTO_SYNC] ?: true,
-            lastSyncTimestamp = prefs[Keys.LAST_SYNC_TS] ?: 0L
+            lastSyncTimestamp = prefs[Keys.LAST_SYNC_TS] ?: 0L,
+            isConfigured = AppSecurityVault.isConfigured(context)
         )
     }
 
@@ -144,6 +130,10 @@ class PreferencesStore(private val context: Context) {
         context.dataStore.edit { it[Keys.APPEARANCE_MODE] = mode.key }
     }
 
+    suspend fun setAutoSyncEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.AUTO_SYNC] = enabled }
+    }
+
     suspend fun setAutoIncludeTaxForBusiness(businessId: String, enabled: Boolean) {
         context.dataStore.edit { prefs ->
             val current = parseBooleanMap(prefs[Keys.AUTO_INCLUDE_TAX_MAP_JSON]).toMutableMap()
@@ -172,28 +162,6 @@ class PreferencesStore(private val context: Context) {
         val obj = org.json.JSONObject()
         map.forEach { (k, v) -> obj.put(k, v) }
         return obj.toString()
-    }
-
-    suspend fun saveServerUrlOnly(baseUrl: String) {
-        val normalizedUrl = normalizeUrl(baseUrl)
-        context.dataStore.edit { prefs ->
-            prefs[Keys.SERVER_BASE_URL] = normalizedUrl.ifBlank { DEFAULT_SERVER_URL }
-        }
-    }
-
-    suspend fun saveServerConfig(
-        baseUrl: String,
-        apiToken: String,
-        wsUrl: String,
-        autoSyncEnabled: Boolean
-    ) {
-        val normalizedUrl = normalizeUrl(baseUrl)
-        context.dataStore.edit { prefs ->
-            prefs[Keys.SERVER_BASE_URL] = normalizedUrl.ifBlank { DEFAULT_SERVER_URL }
-            prefs[Keys.API_TOKEN] = apiToken.trim()
-            prefs[Keys.WS_URL] = wsUrl.trim()
-            prefs[Keys.AUTO_SYNC] = autoSyncEnabled
-        }
     }
 
     suspend fun saveAuthSession(
@@ -264,10 +232,5 @@ class PreferencesStore(private val context: Context) {
 
     suspend fun updateLastSyncTimestamp(timestamp: Long) {
         context.dataStore.edit { it[Keys.LAST_SYNC_TS] = timestamp }
-    }
-
-    private fun normalizeUrl(raw: String): String {
-        val trimmed = raw.trim()
-        return if (trimmed.isNotEmpty() && !trimmed.endsWith("/")) "$trimmed/" else trimmed
     }
 }

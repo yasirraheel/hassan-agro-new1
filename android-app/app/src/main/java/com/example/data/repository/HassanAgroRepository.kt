@@ -29,6 +29,7 @@ import com.example.data.remote.ToggleTeamUserRequest
 import com.example.data.remote.toDto
 import com.example.data.remote.toEntity
 import com.example.data.remote.toEntityPair
+import com.example.util.AppSecurityVault
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -151,20 +152,17 @@ class HassanAgroRepository(
     }
 
     suspend fun login(
-        serverBaseUrl: String,
         email: String,
         password: String,
         otpCode: String? = null
     ): AuthActionResult =
         withContext(Dispatchers.IO) {
-            val cleanUrl = serverBaseUrl.trim().ifBlank { PreferencesStore.DEFAULT_SERVER_URL }
-            if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
-                return@withContext AuthActionResult(false, "Server URL must start with http:// or https://")
+            if (!AppSecurityVault.isConfigured(context)) {
+                return@withContext AuthActionResult(false, "Cloud service is unavailable in this app build.")
             }
             try {
-                prefs.saveServerUrlOnly(cleanUrl)
                 val deviceId = prefs.ensureDeviceId()
-                val api = CustomServerClientFactory.createApi(cleanUrl, "", deviceId)
+                val api = CustomServerClientFactory.createApi(context, "", deviceId)
                 val resp = api.login(
                     LoginRequest(
                         email = email.trim(),
@@ -215,12 +213,11 @@ class HassanAgroRepository(
 
                 AuthActionResult(true, body.message ?: "Welcome back, ${body.user.name}!")
             } catch (e: Exception) {
-                AuthActionResult(false, "Unable to reach server: ${e.localizedMessage ?: "Check internet or Server URL"}")
+                AuthActionResult(false, AppSecurityVault.sanitizeNetworkError(e.localizedMessage))
             }
         }
 
     suspend fun register(
-        serverBaseUrl: String,
         name: String,
         email: String,
         password: String,
@@ -230,14 +227,12 @@ class HassanAgroRepository(
         currencySymbol: String,
         otpCode: String? = null
     ): AuthActionResult = withContext(Dispatchers.IO) {
-        val cleanUrl = serverBaseUrl.trim().ifBlank { PreferencesStore.DEFAULT_SERVER_URL }
-        if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
-            return@withContext AuthActionResult(false, "Server URL must start with http:// or https://")
+        if (!AppSecurityVault.isConfigured(context)) {
+            return@withContext AuthActionResult(false, "Cloud service is unavailable in this app build.")
         }
         try {
-            prefs.saveServerUrlOnly(cleanUrl)
             val deviceId = prefs.ensureDeviceId()
-            val api = CustomServerClientFactory.createApi(cleanUrl, "", deviceId)
+            val api = CustomServerClientFactory.createApi(context, "", deviceId)
             val resp = api.register(
                 RegisterRequest(
                     name = name.trim(),
@@ -288,19 +283,18 @@ class HassanAgroRepository(
 
             AuthActionResult(true, body.message ?: "Welcome to Business Manager!")
         } catch (e: Exception) {
-            AuthActionResult(false, "Unable to reach server: ${e.localizedMessage ?: "Check internet or Server URL"}")
+            AuthActionResult(false, AppSecurityVault.sanitizeNetworkError(e.localizedMessage))
         }
     }
 
     suspend fun refreshSession(): Boolean = withContext(Dispatchers.IO) {
         val session = prefs.authSessionFlow.first()
-        val config = prefs.serverConfigFlow.first()
-        if (!session.isLoggedIn || !config.isConfigured) return@withContext session.isLoggedIn
+        if (!session.isLoggedIn || !AppSecurityVault.isConfigured(context)) return@withContext session.isLoggedIn
         try {
             val deviceId = prefs.ensureDeviceId()
-            val api = CustomServerClientFactory.createApi(config.serverBaseUrl, session.authToken, deviceId)
+            val api = CustomServerClientFactory.createApi(context, session.authToken, deviceId)
             val resp = api.me()
-            if (resp.code() == 401 || resp.code() == 403) {
+            if (resp.code() == 401) {
                 prefs.clearAuthSession()
                 return@withContext false
             }
@@ -325,11 +319,10 @@ class HassanAgroRepository(
 
     suspend fun logout() = withContext(Dispatchers.IO) {
         val session = prefs.authSessionFlow.first()
-        val config = prefs.serverConfigFlow.first()
-        if (session.isLoggedIn && config.isConfigured) {
+        if (session.isLoggedIn && AppSecurityVault.isConfigured(context)) {
             try {
                 val deviceId = prefs.ensureDeviceId()
-                val api = CustomServerClientFactory.createApi(config.serverBaseUrl, session.authToken, deviceId)
+                val api = CustomServerClientFactory.createApi(context, session.authToken, deviceId)
                 api.logout()
             } catch (_: Exception) {
                 // Best effort server logout
@@ -557,46 +550,24 @@ class HassanAgroRepository(
         expenseDao.softDelete(expenseId)
     }
 
-    suspend fun saveServerConfig(
-        baseUrl: String,
-        apiToken: String,
-        wsUrl: String,
-        autoSyncEnabled: Boolean
-    ) {
-        prefs.saveServerConfig(baseUrl, apiToken, wsUrl, autoSyncEnabled)
+    suspend fun setAutoSyncEnabled(enabled: Boolean) {
+        prefs.setAutoSyncEnabled(enabled)
     }
-
-    suspend fun testServerConnection(baseUrl: String, apiToken: String): Result<String> =
-        withContext(Dispatchers.IO) {
-            try {
-                if (!baseUrl.trim().startsWith("http://") && !baseUrl.trim().startsWith("https://")) {
-                    return@withContext Result.failure(IllegalArgumentException("Server URL must start with http:// or https://"))
-                }
-                val deviceId = prefs.ensureDeviceId()
-                val session = prefs.authSessionFlow.first()
-                val tokenToUse = apiToken.trim().ifBlank { session.authToken }
-                val api = CustomServerClientFactory.createApi(baseUrl, tokenToUse, deviceId)
-                val response = api.health()
-                Result.success(response.message ?: "Connected (${response.status})")
-            } catch (e: Exception) {
-                Result.failure(e)
-            }
-        }
 
     suspend fun syncWithCustomServer(): SyncResult = withContext(Dispatchers.IO) {
         val config = prefs.serverConfigFlow.first()
         val session = prefs.authSessionFlow.first()
-        if (!config.isConfigured) {
+        if (!AppSecurityVault.isConfigured(context)) {
             return@withContext SyncResult(
                 success = false,
-                message = "No server configured. Running in Offline Mode."
+                message = "Cloud sync is unavailable in this build. Offline data is safe."
             )
         }
-        val activeToken = session.authToken.ifBlank { config.apiToken }
+        val activeToken = session.authToken
         val deviceId = prefs.ensureDeviceId()
         try {
             val api = CustomServerClientFactory.createApi(
-                baseUrl = config.serverBaseUrl,
+                context = context,
                 apiToken = activeToken,
                 deviceId = deviceId
             )
@@ -711,7 +682,7 @@ class HassanAgroRepository(
         } catch (e: Exception) {
             SyncResult(
                 success = false,
-                message = "Sync failed (offline data safe): ${e.localizedMessage ?: "Network error"}"
+                message = "Sync failed (offline data safe): ${AppSecurityVault.sanitizeNetworkError(e.localizedMessage, "Check your internet connection.")}"
             )
         }
     }
@@ -719,13 +690,12 @@ class HassanAgroRepository(
     // ---------- Business Owner In-App Team & Custom Roles API ----------
 
     private suspend fun createAuthedApi() = run {
-        val config = prefs.serverConfigFlow.first()
         val session = prefs.authSessionFlow.first()
-        if (!config.isConfigured || session.authToken.isBlank()) {
-            throw IllegalStateException("Please sign in to a connected server to manage team & roles.")
+        if (!AppSecurityVault.isConfigured(context) || session.authToken.isBlank()) {
+            throw IllegalStateException("Please sign in to manage team & roles.")
         }
         val deviceId = prefs.ensureDeviceId()
-        CustomServerClientFactory.createApi(config.serverBaseUrl, session.authToken, deviceId)
+        CustomServerClientFactory.createApi(context, session.authToken, deviceId)
     }
 
     suspend fun fetchTeamOverview(businessId: String): Result<TeamOverviewResponse> = withContext(Dispatchers.IO) {

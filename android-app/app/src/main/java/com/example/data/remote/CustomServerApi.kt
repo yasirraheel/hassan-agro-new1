@@ -1,5 +1,7 @@
 package com.example.data.remote
 
+import android.content.Context
+import com.example.util.AppSecurityVault
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.Interceptor
@@ -72,29 +74,58 @@ object CustomServerClientFactory {
         .addLast(KotlinJsonAdapterFactory())
         .build()
 
-    fun buildOkHttpClient(apiToken: String, deviceId: String): OkHttpClient {
-        val authInterceptor = Interceptor { chain ->
-            val builder = chain.request().newBuilder()
+    fun buildOkHttpClient(context: Context, apiToken: String, deviceId: String): OkHttpClient {
+        val appContext = context.applicationContext
+        val sealedConfig = AppSecurityVault.resolveConfig(appContext)
+        val packageName = appContext.packageName
+        val certSha256 = AppSecurityVault.getSigningCertSha256(appContext)
+
+        val authAndAttestationInterceptor = Interceptor { chain ->
+            val original = chain.request()
+            val timestampSeconds = (System.currentTimeMillis() / 1000L).toString()
+            val signature = AppSecurityVault.computeRequestSignature(
+                packageName = packageName,
+                certSha256 = certSha256,
+                timestampSeconds = timestampSeconds,
+                method = original.method,
+                encodedPath = original.url.encodedPath,
+                appSecret = sealedConfig.appSecret
+            )
+
+            val builder = original.newBuilder()
                 .header("Accept", "application/json")
                 .header("X-Device-Id", deviceId)
+                .header("X-App-Package", packageName)
+                .header("X-App-Timestamp", timestampSeconds)
+
+            if (certSha256.isNotBlank()) {
+                builder.header("X-App-Cert", certSha256)
+            }
+            if (signature.isNotBlank()) {
+                builder.header("X-App-Signature", signature)
+            }
             if (apiToken.isNotBlank()) {
                 builder.header("Authorization", "Bearer $apiToken")
             }
             chain.proceed(builder.build())
         }
+
         return OkHttpClient.Builder()
-            .addInterceptor(authInterceptor)
+            .addInterceptor(authAndAttestationInterceptor)
             .connectTimeout(12, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
             .writeTimeout(20, TimeUnit.SECONDS)
             .build()
     }
 
-    fun createApi(baseUrl: String, apiToken: String, deviceId: String): CustomServerApi {
-        val sanitized = baseUrl.trim().let { if (it.endsWith("/")) it else "$it/" }
-        val client = buildOkHttpClient(apiToken, deviceId)
+    fun createApi(context: Context, apiToken: String, deviceId: String): CustomServerApi {
+        val baseUrl = AppSecurityVault.getBaseUrl(context)
+        if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+            throw IllegalStateException("Cloud service configuration is unavailable in this build.")
+        }
+        val client = buildOkHttpClient(context, apiToken, deviceId)
         return Retrofit.Builder()
-            .baseUrl(sanitized)
+            .baseUrl(baseUrl)
             .client(client)
             .addConverterFactory(MoshiConverterFactory.create(moshi))
             .build()
@@ -102,15 +133,15 @@ object CustomServerClientFactory {
     }
 
     fun openRealtimeSyncSocket(
-        wsUrl: String,
+        context: Context,
         apiToken: String,
         deviceId: String,
         onSyncSignal: () -> Unit,
         onStatusChanged: (Boolean) -> Unit
     ): WebSocket? {
-        val trimmed = wsUrl.trim()
+        val trimmed = AppSecurityVault.getWsUrl(context).trim()
         if (!trimmed.startsWith("ws://") && !trimmed.startsWith("wss://")) return null
-        val client = buildOkHttpClient(apiToken, deviceId)
+        val client = buildOkHttpClient(context, apiToken, deviceId)
         val request = Request.Builder().url(trimmed).build()
         return client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {

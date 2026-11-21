@@ -1,9 +1,7 @@
 package com.example.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,7 +25,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BusinessCenter
-import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MarkEmailRead
@@ -77,13 +74,11 @@ import com.example.viewmodel.AuthUiState
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(
-    initialServerUrl: String,
     authState: AuthUiState,
     selectedPreviewThemeKey: String,
     onPreviewThemeChange: (String) -> Unit,
-    onLogin: (serverUrl: String, email: String, password: String) -> Unit,
+    onLogin: (email: String, password: String) -> Unit,
     onRegister: (
-        serverUrl: String,
         name: String,
         email: String,
         password: String,
@@ -103,8 +98,6 @@ fun LoginScreen(
     val semantic = LocalSemanticColors.current
 
     var selectedTab by remember { mutableIntStateOf(0) } // 0 = Sign In, 1 = Create Business
-    var serverUrl by remember(initialServerUrl) { mutableStateOf(initialServerUrl) }
-    var showServerField by remember { mutableStateOf(false) }
 
     // Shared credentials
     var email by remember { mutableStateOf("") }
@@ -518,53 +511,6 @@ fun LoginScreen(
                             .testTag("auth_password_input")
                     )
 
-                    // Collapsible Server URL Row
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable { showServerField = !showServerField }
-                            .padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                            Icon(
-                                imageVector = Icons.Default.Cloud,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = "Server: ${serverUrl.removePrefix("https://").removePrefix("http://").trimEnd('/')}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        Text(
-                            text = if (showServerField) "Hide" else "Change",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-
-                    AnimatedVisibility(visible = showServerField) {
-                        OutlinedTextField(
-                            value = serverUrl,
-                            onValueChange = { serverUrl = it },
-                            label = { Text("Server Base URL", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            placeholder = { Text("https://ledger.hassanagro.com/", maxLines = 1) },
-                            singleLine = true,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("auth_server_url_input")
-                        )
-                    }
-
                     if (!displayedError.isNullOrBlank()) {
                         Surface(
                             shape = RoundedCornerShape(10.dp),
@@ -588,7 +534,7 @@ fun LoginScreen(
                                     localError = "Please enter your email and password."
                                     return@Button
                                 }
-                                onLogin(serverUrl, email, password)
+                                onLogin(email, password)
                             } else {
                                 when {
                                     fullName.isBlank() -> localError = "Please enter your full name."
@@ -596,7 +542,6 @@ fun LoginScreen(
                                     email.isBlank() -> localError = "Please enter a valid email address."
                                     password.length < 6 -> localError = "Password must be at least 6 characters."
                                     else -> onRegister(
-                                        serverUrl,
                                         fullName,
                                         email,
                                         password,

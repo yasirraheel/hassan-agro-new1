@@ -137,8 +137,7 @@ fun SettingsScreen(
     onUpdateTaxSettings: (Double, Boolean, List<TaxPreset>) -> Unit,
     onDeleteBusiness: (String) -> Unit,
     onUpdateBusinessLogo: (String, Uri) -> Unit,
-    onSaveServerConfig: (String, String, String, Boolean) -> Unit,
-    onTestServerConnection: (String, String) -> Unit,
+    onToggleAutoSync: (Boolean) -> Unit,
     onSyncNow: () -> Unit,
     onLoadTeam: () -> Unit,
     onSaveTeamRole: (String?, String, String, List<String>, () -> Unit) -> Unit,
@@ -638,13 +637,11 @@ fun SettingsScreen(
                     onDeleteUser = onDeleteTeamUser
                 )
             } else {
-                ServerSyncConfigTab(
+                CloudSyncTab(
                     serverConfig = serverConfig,
                     syncState = syncState,
                     pendingSyncCount = pendingSyncCount,
-                    canEditServer = canManageSettings,
-                    onSaveServerConfig = onSaveServerConfig,
-                    onTestConnection = onTestServerConnection,
+                    onToggleAutoSync = onToggleAutoSync,
                     onSyncNow = onSyncNow
                 )
             }
@@ -679,21 +676,13 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun ServerSyncConfigTab(
+private fun CloudSyncTab(
     serverConfig: ServerSyncConfig,
     syncState: SyncUiState,
     pendingSyncCount: Int,
-    canEditServer: Boolean,
-    onSaveServerConfig: (String, String, String, Boolean) -> Unit,
-    onTestConnection: (String, String) -> Unit,
+    onToggleAutoSync: (Boolean) -> Unit,
     onSyncNow: () -> Unit
 ) {
-    var baseUrl by remember(serverConfig.serverBaseUrl) { mutableStateOf(serverConfig.serverBaseUrl) }
-    var apiToken by remember(serverConfig.apiToken) { mutableStateOf(serverConfig.apiToken) }
-    var wsUrl by remember(serverConfig.wsUrl) { mutableStateOf(serverConfig.wsUrl) }
-    var autoSync by remember(serverConfig.autoSyncEnabled) { mutableStateOf(serverConfig.autoSyncEnabled) }
-    var showContract by remember { mutableStateOf(false) }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -711,14 +700,14 @@ private fun ServerSyncConfigTab(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text("Offline & Multi-Device Sync Status", style = MaterialTheme.typography.titleMedium)
+                Text("Cloud Sync & Backup Status", style = MaterialTheme.typography.titleMedium)
                 Text(
                     text = "Device ID: ${serverConfig.deviceId.ifBlank { "Initializing..." }}",
                     style = MonoCodeSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    text = "Pending local changes: $pendingSyncCount • WebSocket: ${if (syncState.wsConnected) "Connected" else "Idle"}",
+                    text = "Pending local changes: $pendingSyncCount • Status: ${syncState.lastStatusText}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -726,7 +715,7 @@ private fun ServerSyncConfigTab(
                     text = if (serverConfig.lastSyncTimestamp > 0L)
                         "Last synced: ${Formatters.formatDateTime(serverConfig.lastSyncTimestamp)}"
                     else
-                        "Your signed-in session authenticates sync automatically via Bearer token.",
+                        "Your account stays synced across devices automatically.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -747,41 +736,9 @@ private fun ServerSyncConfigTab(
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text("Backend Server Connection", style = MaterialTheme.typography.titleMedium)
-                OutlinedTextField(
-                    value = baseUrl,
-                    onValueChange = { baseUrl = it },
-                    enabled = canEditServer,
-                    label = { Text("Server Base URL", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    placeholder = { Text("https://ledger.hassanagro.com/", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("server_base_url_input")
-                )
-                OutlinedTextField(
-                    value = apiToken,
-                    onValueChange = { apiToken = it },
-                    enabled = canEditServer,
-                    label = { Text("Fallback API Token (optional)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    placeholder = { Text("Signed-in session token is used automatically", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("server_token_input")
-                )
-                OutlinedTextField(
-                    value = wsUrl,
-                    onValueChange = { wsUrl = it },
-                    enabled = canEditServer,
-                    label = { Text("WebSocket URL (optional)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    placeholder = { Text("wss://ledger.hassanagro.com/ws/sync", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                Text("Sync Preferences", style = MaterialTheme.typography.titleMedium)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -790,55 +747,22 @@ private fun ServerSyncConfigTab(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Auto-Sync Changes", style = MaterialTheme.typography.titleSmall)
                         Text(
-                            text = "Automatically push/pull when saving stock, bills, expenses, or settings",
+                            text = "Automatically keep stock, bills, expenses, and settings updated in the background",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Switch(checked = autoSync, enabled = canEditServer, onCheckedChange = { autoSync = it })
-                }
-
-                if (canEditServer) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
-                            onClick = { onSaveServerConfig(baseUrl, apiToken, wsUrl, autoSync) },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(48.dp)
-                                .testTag("save_server_config_button")
-                        ) {
-                            Text("Save", maxLines = 1, softWrap = false)
-                        }
-                        OutlinedButton(
-                            onClick = { onTestConnection(baseUrl, apiToken) },
-                            enabled = !syncState.isTestingConnection,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(48.dp)
-                                .testTag("test_server_button")
-                        ) {
-                            if (syncState.isTestingConnection) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                            } else {
-                                Icon(Icons.Default.NetworkCheck, contentDescription = null, modifier = Modifier.size(18.dp))
-                            }
-                            Spacer(Modifier.width(6.dp))
-                            Text("Test", maxLines = 1, softWrap = false)
-                        }
-                    }
+                    Switch(
+                        checked = serverConfig.autoSyncEnabled,
+                        onCheckedChange = onToggleAutoSync,
+                        modifier = Modifier.testTag("toggle_auto_sync")
+                    )
                 }
 
                 Button(
-                    onClick = {
-                        if (canEditServer) {
-                            onSaveServerConfig(baseUrl, apiToken, wsUrl, autoSync)
-                        }
-                        onSyncNow()
-                    },
+                    onClick = onSyncNow,
                     enabled = !syncState.isSyncing,
+                    shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp)
@@ -863,75 +787,6 @@ private fun ServerSyncConfigTab(
             }
         }
 
-        Surface(
-            shape = MaterialTheme.shapes.large,
-            color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showContract = !showContract },
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                        Icon(Icons.Default.Code, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = "Backend API Contract",
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    Text(
-                        text = if (showContract) "Hide" else "View",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                AnimatedVisibility(visible = showContract) {
-                    Column(
-                        modifier = Modifier.padding(top = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        Text(
-                            text = "All authenticated requests send Authorization: Bearer <userToken> and X-Device-Id. Manage roles, admins, and permissions in the Laravel Web Admin Panel.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Surface(
-                            shape = MaterialTheme.shapes.small,
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                        ) {
-                            Text(
-                                text = """
-                                    1) POST /api/v1/auth/login
-                                       POST /api/v1/auth/register
-                                       GET  /api/v1/auth/me
-                                       POST /api/v1/auth/logout
-
-                                    2) GET /api/v1/health
-                                       -> { "status": "ok", "serverTime": ... }
-
-                                    3) POST /api/v1/sync/push
-                                       Body: { deviceId, pushedAt, businesses[], products[], invoices[], expenses[] }
-
-                                    4) GET /api/v1/sync/pull?since=<epochMillis>
-                                       -> { serverTime, user, businesses[], products[], invoices[], expenses[] }
-                                """.trimIndent(),
-                                style = MonoCodeSmall,
-                                modifier = Modifier.padding(12.dp)
-                            )
-                        }
-                    }
-                }
-            }
-        }
         Spacer(Modifier.height(16.dp))
     }
 }

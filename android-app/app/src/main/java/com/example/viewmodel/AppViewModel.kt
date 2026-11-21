@@ -75,7 +75,6 @@ data class AuthUiState(
 
 data class SyncUiState(
     val isSyncing: Boolean = false,
-    val isTestingConnection: Boolean = false,
     val wsConnected: Boolean = false,
     val lastStatusText: String = "Offline Ready",
     val lastError: String? = null
@@ -194,7 +193,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val authUiState: StateFlow<AuthUiState> = _authUiState.asStateFlow()
 
     private data class PendingRegistration(
-        val serverUrl: String,
         val name: String,
         val email: String,
         val password: String,
@@ -204,7 +202,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val currencySymbol: String
     )
     private data class PendingLoginOtp(
-        val serverUrl: String,
         val email: String,
         val password: String,
         val businessName: String
@@ -375,15 +372,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _authUiState.update { it.copy(errorMessage = null) }
     }
 
-    fun login(serverUrl: String, email: String, password: String) {
+    fun login(email: String, password: String) {
         if (_authUiState.value.isLoading) return
         viewModelScope.launch {
             _authUiState.update { it.copy(isLoading = true, errorMessage = null, otpInfoMessage = null) }
-            val result = repository.login(serverUrl, email, password, otpCode = null)
+            val result = repository.login(email, password, otpCode = null)
             if (result.success && result.otpRequired) {
                 pendingRegistration = null
                 pendingLoginOtp = PendingLoginOtp(
-                    serverUrl = serverUrl,
                     email = result.otpEmail.ifBlank { email.trim() },
                     password = password,
                     businessName = result.otpBusinessName
@@ -419,7 +415,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun register(
-        serverUrl: String,
         name: String,
         email: String,
         password: String,
@@ -430,7 +425,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         if (_authUiState.value.isLoading) return
         val pending = PendingRegistration(
-            serverUrl = serverUrl,
             name = name,
             email = email,
             password = password,
@@ -444,7 +438,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _authUiState.update { it.copy(isLoading = true, errorMessage = null, otpInfoMessage = null) }
             val result = repository.register(
-                serverBaseUrl = serverUrl,
                 name = name,
                 email = email,
                 password = password,
@@ -498,7 +491,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             _authUiState.update { it.copy(isLoading = true, errorMessage = null) }
             val result = if (loginPending != null) {
                 repository.login(
-                    serverBaseUrl = loginPending.serverUrl,
                     email = loginPending.email,
                     password = loginPending.password,
                     otpCode = cleanOtp
@@ -506,7 +498,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 val pending = regPending!!
                 repository.register(
-                    serverBaseUrl = pending.serverUrl,
                     name = pending.name,
                     email = pending.email,
                     password = pending.password,
@@ -542,7 +533,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             _authUiState.update { it.copy(isLoading = true, errorMessage = null) }
             val result = if (loginPending != null) {
                 repository.login(
-                    serverBaseUrl = loginPending.serverUrl,
                     email = loginPending.email,
                     password = loginPending.password,
                     otpCode = null
@@ -550,7 +540,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 val pending = regPending!!
                 repository.register(
-                    serverBaseUrl = pending.serverUrl,
                     name = pending.name,
                     email = pending.email,
                     password = pending.password,
@@ -591,13 +580,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun checkVerifiedAndSignIn() {
-        val serverUrl = pendingLoginOtp?.serverUrl ?: pendingRegistration?.serverUrl ?: return
         val email = pendingLoginOtp?.email ?: pendingRegistration?.email ?: return
         val password = pendingLoginOtp?.password ?: pendingRegistration?.password ?: return
         if (_authUiState.value.isLoading) return
         viewModelScope.launch {
             _authUiState.update { it.copy(isLoading = true, errorMessage = null) }
-            val result = repository.login(serverUrl, email, password, otpCode = null)
+            val result = repository.login(email, password, otpCode = null)
             if (result.success && !result.otpRequired) {
                 pendingLoginOtp = null
                 pendingRegistration = null
@@ -699,10 +687,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         realtimeSocket?.close(1000, "Reconfiguring")
         realtimeSocket = null
         _syncUiState.update { it.copy(wsConnected = false) }
-        if (cfg.autoSyncEnabled && cfg.wsUrl.isNotBlank()) {
+        if (cfg.autoSyncEnabled) {
             realtimeSocket = CustomServerClientFactory.openRealtimeSyncSocket(
-                wsUrl = cfg.wsUrl,
-                apiToken = authToken.ifBlank { cfg.apiToken },
+                context = getApplication(),
+                apiToken = authToken,
                 deviceId = cfg.deviceId,
                 onSyncSignal = { syncNow(silent = true) },
                 onStatusChanged = { connected ->
@@ -1460,44 +1448,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         file to csv
     }
 
-    // --- Custom Server Sync ---
-    fun saveServerConfig(
-        baseUrl: String,
-        apiToken: String,
-        wsUrl: String,
-        autoSyncEnabled: Boolean
-    ) {
+    // --- Cloud Sync ---
+    fun setAutoSyncEnabled(enabled: Boolean) {
         viewModelScope.launch {
-            repository.saveServerConfig(baseUrl, apiToken, wsUrl, autoSyncEnabled)
-            emitMessage("Server settings saved")
-        }
-    }
-
-    fun saveAndSyncServerConfig(
-        baseUrl: String,
-        apiToken: String,
-        wsUrl: String,
-        autoSyncEnabled: Boolean
-    ) {
-        if (_syncUiState.value.isSyncing) return
-        viewModelScope.launch {
-            repository.saveServerConfig(baseUrl, apiToken, wsUrl, autoSyncEnabled)
-            syncNow(silent = false)
-        }
-    }
-
-    fun testServerConnection(baseUrl: String, apiToken: String) {
-        viewModelScope.launch {
-            _syncUiState.update { it.copy(isTestingConnection = true, lastError = null) }
-            val result = repository.testServerConnection(baseUrl, apiToken)
-            result.onSuccess { msg ->
-                _syncUiState.update { it.copy(isTestingConnection = false, lastStatusText = msg) }
-                emitMessage("Server reachable: $msg")
-            }.onFailure { err ->
-                val errMsg = err.localizedMessage ?: "Connection failed"
-                _syncUiState.update { it.copy(isTestingConnection = false, lastError = errMsg) }
-                emitMessage("Connection error: $errMsg")
-            }
+            repository.setAutoSyncEnabled(enabled)
+            emitMessage(if (enabled) "Auto-sync enabled" else "Auto-sync paused")
         }
     }
 

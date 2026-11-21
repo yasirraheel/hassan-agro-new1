@@ -141,7 +141,6 @@ private enum class AppRootStage {
 fun HassanAgroApp(viewModel: AppViewModel = viewModel()) {
     val authSessionLoaded by viewModel.authSessionLoaded.collectAsStateWithLifecycle()
     val authUiState by viewModel.authUiState.collectAsStateWithLifecycle()
-    val serverConfig by viewModel.serverConfig.collectAsStateWithLifecycle()
     val activeBusiness by viewModel.activeBusiness.collectAsStateWithLifecycle()
     val appearanceMode by viewModel.appearanceMode.collectAsStateWithLifecycle()
 
@@ -181,7 +180,6 @@ fun HassanAgroApp(viewModel: AppViewModel = viewModel()) {
                 }
                 AppRootStage.LOGIN -> {
                     LoginScreen(
-                        initialServerUrl = serverConfig.serverBaseUrl,
                         authState = authUiState,
                         selectedPreviewThemeKey = signupPreviewThemeKey,
                         onPreviewThemeChange = { signupPreviewThemeKey = it },
@@ -688,8 +686,7 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
                                 onUpdateTaxSettings = viewModel::updateBusinessTaxSettings,
                                 onDeleteBusiness = viewModel::deleteBusiness,
                                 onUpdateBusinessLogo = viewModel::updateBusinessLogo,
-                                onSaveServerConfig = viewModel::saveServerConfig,
-                                onTestServerConnection = viewModel::testServerConnection,
+                                onToggleAutoSync = viewModel::setAutoSyncEnabled,
                                 onSyncNow = { viewModel.syncNow(silent = false) },
                                 onLoadTeam = viewModel::loadTeamOverview,
                                 onSaveTeamRole = viewModel::saveTeamRole,

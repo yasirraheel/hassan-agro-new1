@@ -1,4 +1,11 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.util.Base64
+import java.util.Properties
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 plugins {
   alias(libs.plugins.android.application)
@@ -8,18 +15,58 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+fun loadEnvSecret(key: String, defaultValue: String = ""): String {
+  val merged = Properties()
+  listOf(".env.example", ".env").forEach { fileName ->
+    val f = rootProject.file(fileName)
+    if (f.exists()) {
+      f.inputStream().use { merged.load(it) }
+    }
+  }
+  val fromEnv = System.getenv(key)?.trim()
+  val raw = if (!fromEnv.isNullOrEmpty()) fromEnv else merged.getProperty(key)?.trim().orEmpty()
+  val unquoted = raw.removeSurrounding("\"").removeSurrounding("'").trim()
+  return unquoted.ifEmpty { defaultValue }
+}
+
+fun sealBuildSecret(plainText: String, appId: String, saltHex: String): String {
+  if (plainText.isBlank()) return ""
+  val keyBytes = MessageDigest.getInstance("SHA-256")
+    .digest("$appId:$saltHex:bm-seal-v1".toByteArray(Charsets.UTF_8))
+  val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
+  val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+  cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(keyBytes, "AES"), GCMParameterSpec(128, iv))
+  val encrypted = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
+  val combined = ByteArray(iv.size + encrypted.size)
+  System.arraycopy(iv, 0, combined, 0, iv.size)
+  System.arraycopy(encrypted, 0, combined, iv.size, encrypted.size)
+  return Base64.getEncoder().encodeToString(combined)
+}
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.hassanagro.k7m2px"
+    val appId = "com.aistudio.hassanagro.k7m2px"
+    applicationId = appId
     minSdk = 24
     targetSdk = 36
     versionCode = 1
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    val saltBytes = ByteArray(16).also { SecureRandom().nextBytes(it) }
+    val sealedSaltHex = saltBytes.joinToString("") { "%02x".format(it) }
+    val rawBaseUrl = loadEnvSecret("BACKEND_BASE_URL", "https://ledger.hassanagro.com/")
+    val rawAppSecret = loadEnvSecret("APP_CLIENT_SECRET", "")
+    val rawWsUrl = loadEnvSecret("BACKEND_WS_URL", "")
+
+    buildConfigField("String", "SEALED_SALT", "\"$sealedSaltHex\"")
+    buildConfigField("String", "SEALED_BASE_URL", "\"${sealBuildSecret(rawBaseUrl, appId, sealedSaltHex)}\"")
+    buildConfigField("String", "SEALED_APP_SECRET", "\"${sealBuildSecret(rawAppSecret, appId, sealedSaltHex)}\"")
+    buildConfigField("String", "SEALED_WS_URL", "\"${sealBuildSecret(rawWsUrl, appId, sealedSaltHex)}\"")
   }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,
@@ -79,6 +126,9 @@ secrets {
   propertiesFileName = ".env"
   defaultPropertiesFileName = ".env.example"
   ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
+  ignoreList.add("BACKEND_BASE_URL")
+  ignoreList.add("APP_CLIENT_SECRET")
+  ignoreList.add("BACKEND_WS_URL")
 }
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }

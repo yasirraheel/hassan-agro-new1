@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\AppClientAuthService;
 use App\Services\ProfitLossService;
 use App\Services\RbacService;
 use App\Services\SmtpOtpService;
@@ -20,7 +21,8 @@ class AdminController extends Controller
     public function __construct(
         private readonly RbacService $rbac,
         private readonly ProfitLossService $pl,
-        private readonly SmtpOtpService $smtpOtp
+        private readonly SmtpOtpService $smtpOtp,
+        private readonly AppClientAuthService $appAuth
     ) {
     }
 
@@ -1336,7 +1338,7 @@ class AdminController extends Controller
             'updated_at_ms' => $this->rbac->nowMs(),
         ]);
 
-        return redirect()->route('admin.roles')->with('success', 'Role permissions updated — phones will apply them on next sync.');
+        return redirect()->route('admin.roles')->with('success', 'Role permissions updated. Phones will apply them on next sync.');
     }
 
     public function deleteRole(string $id): RedirectResponse
@@ -1654,11 +1656,110 @@ class AdminController extends Controller
         $adminEmail = (string) ($currentAdmin->email ?? $request->session()->get('bm_admin_email', config('sync.admin_email', '')));
         $adminName = (string) ($currentAdmin->name ?? $this->currentAdminName($request));
         $smtpSettings = $this->smtpOtp->getSettings();
+        $enforceAppAttestation = $this->appAuth->isEnforcementEnabled();
+        $authorizedApps = $this->appAuth->listApps();
 
         return view('admin.settings', compact(
             'businesses', 'selectedBizId', 'activeTheme', 'stats', 'lastSyncMs',
-            'apiBaseUrl', 'apiToken', 'adminEmail', 'adminName', 'smtpSettings'
+            'apiBaseUrl', 'apiToken', 'adminEmail', 'adminName', 'smtpSettings',
+            'enforceAppAttestation', 'authorizedApps'
         ));
+    }
+
+    public function updateAppSecurityToggle(Request $request): RedirectResponse
+    {
+        $enabled = $request->boolean('enforce_app_attestation');
+        if ($enabled) {
+            $activeCount = $this->appAuth->listApps()->where('is_active', true)->count();
+            if ($activeCount === 0) {
+                return back()->with('error', 'Add and activate at least one Android package before enabling Strict App Verification.');
+            }
+        }
+
+        $this->appAuth->setEnforcementEnabled($enabled);
+        $statusText = $enabled
+            ? 'Strict App Verification is now ACTIVE. Only signed APKs with a registered package name and secret key can connect.'
+            : 'Strict App Verification is now OFF (Setup Mode).';
+
+        return redirect()->route('admin.settings')->with('success', $statusText);
+    }
+
+    public function storeAuthorizedApp(Request $request): RedirectResponse
+    {
+        $data = $request->validate([
+            'app_name' => ['required', 'string', 'max:120'],
+            'package_name' => ['required', 'string', 'max:191', 'regex:/^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/'],
+            'cert_sha256' => ['nullable', 'string', 'max:128'],
+        ], [
+            'package_name.regex' => 'Enter a valid Android package name such as com.company.appname.',
+        ]);
+
+        try {
+            $app = $this->appAuth->createApp(
+                $data['app_name'],
+                $data['package_name'],
+                $data['cert_sha256'] ?? null
+            );
+            return redirect()->route('admin.settings')->with(
+                'success',
+                "Package {$app->package_name} registered with a fresh 64-character App Secret Key. Copy it into your Android build secrets before compiling."
+            );
+        } catch (\RuntimeException $e) {
+            return back()->withInput()->with('error', $e->getMessage());
+        }
+    }
+
+    public function rotateAuthorizedAppKey(string $id): RedirectResponse
+    {
+        $app = $this->appAuth->rotateKey($id);
+        if (!$app) {
+            return back()->with('error', 'Authorized app not found.');
+        }
+
+        return redirect()->route('admin.settings')->with(
+            'success',
+            "Generated a new App Secret Key for {$app->package_name}. Rebuild your APK with the new APP_CLIENT_SECRET."
+        );
+    }
+
+    public function toggleAuthorizedApp(string $id): RedirectResponse
+    {
+        $app = $this->appAuth->toggleApp($id);
+        if (!$app) {
+            return back()->with('error', 'Authorized app not found.');
+        }
+
+        $label = $app->is_active ? 'enabled' : 'disabled';
+        return redirect()->route('admin.settings')->with('success', "Package {$app->package_name} is now {$label}.");
+    }
+
+    public function updateAuthorizedAppCert(Request $request, string $id): RedirectResponse
+    {
+        $data = $request->validate([
+            'cert_sha256' => ['nullable', 'string', 'max:128'],
+        ]);
+
+        try {
+            $app = $this->appAuth->updateCertLock($id, $data['cert_sha256'] ?? null);
+            if (!$app) {
+                return back()->with('error', 'Authorized app not found.');
+            }
+            $msg = !empty($app->cert_sha256)
+                ? "Signing certificate SHA-256 locked for {$app->package_name}. Repackaged clones with a different keystore will be blocked."
+                : "Signing certificate lock cleared for {$app->package_name}.";
+            return redirect()->route('admin.settings')->with('success', $msg);
+        } catch (\RuntimeException $e) {
+            return back()->with('error', $e->getMessage());
+        }
+    }
+
+    public function deleteAuthorizedApp(string $id): RedirectResponse
+    {
+        if (!$this->appAuth->deleteApp($id)) {
+            return back()->with('error', 'Authorized app not found.');
+        }
+
+        return redirect()->route('admin.settings')->with('success', 'Authorized package removed.');
     }
 
     public function updateSmtpSettings(Request $request): RedirectResponse
