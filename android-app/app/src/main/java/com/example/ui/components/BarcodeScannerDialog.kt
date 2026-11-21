@@ -13,6 +13,12 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -25,10 +31,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -39,7 +47,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -56,6 +63,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -100,22 +108,36 @@ fun BarcodeScannerDialog(
         }
     }
 
+    val laserTransition = rememberInfiniteTransition(label = "scanner_laser")
+    val laserOffsetDp by laserTransition.animateFloat(
+        initialValue = -42f,
+        targetValue = 42f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "scanner_laser_offset"
+    )
+
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+        properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxSize()
-                .imePadding()
-                .navigationBarsPadding()
-                .padding(16.dp),
+                .fillMaxWidth(0.94f)
+                .widthIn(max = 420.dp)
+                .wrapContentHeight()
+                .imePadding(),
             shape = MaterialTheme.shapes.extraLarge,
-            color = MaterialTheme.colorScheme.surface
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            tonalElevation = 6.dp,
+            shadowElevation = 10.dp
         ) {
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
                     .padding(16.dp)
             ) {
                 Row(
@@ -123,14 +145,23 @@ fun BarcodeScannerDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         Icon(
                             imageVector = Icons.Default.QrCodeScanner,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp)
                         )
                         Spacer(Modifier.width(8.dp))
-                        Text(title, style = MaterialTheme.typography.titleLarge)
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                     Row {
                         if (hasCameraPermission && boundCamera != null) {
@@ -139,31 +170,41 @@ fun BarcodeScannerDialog(
                                     torchOn = !torchOn
                                     boundCamera?.cameraControl?.enableTorch(torchOn)
                                 },
-                                modifier = Modifier.testTag("scanner_torch_button")
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .testTag("scanner_torch_button")
                             ) {
                                 Icon(
                                     imageVector = if (torchOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
-                                    contentDescription = "Toggle flashlight"
+                                    contentDescription = "Toggle flashlight",
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
                         }
                         IconButton(
                             onClick = onDismiss,
-                            modifier = Modifier.testTag("scanner_close_button")
+                            modifier = Modifier
+                                .size(38.dp)
+                                .testTag("scanner_close_button")
                         ) {
-                            Icon(Icons.Default.Close, contentDescription = "Close scanner")
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Close scanner",
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
                     }
                 }
 
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(10.dp))
 
+                // Compact 220dp camera viewfinder
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f)
+                        .height(220.dp)
                         .clip(MaterialTheme.shapes.large)
-                        .background(Color(0xFF0E1B13)),
+                        .background(Color(0xFF0D141F)),
                     contentAlignment = Alignment.Center
                 ) {
                     if (hasCameraPermission) {
@@ -228,43 +269,52 @@ fun BarcodeScannerDialog(
                             }
                         )
 
-                        // Scan frame overlay
+                        // Compact reticle + animated laser scan line
                         Box(
                             modifier = Modifier
-                                .size(width = 240.dp, height = 140.dp)
+                                .size(width = 210.dp, height = 108.dp)
                                 .border(
-                                    BorderStroke(2.5.dp, Color(0xFF7BE8A3)),
-                                    RoundedCornerShape(16.dp)
-                                )
-                        )
+                                    BorderStroke(2.dp, MaterialTheme.colorScheme.primary),
+                                    RoundedCornerShape(14.dp)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(0.88f)
+                                    .height(2.dp)
+                                    .offset(y = laserOffsetDp.dp)
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.85f))
+                            )
+                        }
+
                         Text(
-                            text = "Align barcode or QR inside frame",
-                            style = MaterialTheme.typography.labelMedium,
+                            text = "Align barcode inside frame",
+                            style = MaterialTheme.typography.labelSmall,
                             color = Color.White,
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
-                                .padding(bottom = 16.dp)
-                                .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(12.dp))
-                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                                .padding(bottom = 10.dp)
+                                .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+                                .padding(horizontal = 10.dp, vertical = 4.dp)
                         )
                     } else {
                         Column(
-                            modifier = Modifier.padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                            modifier = Modifier.padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.QrCodeScanner,
                                 contentDescription = null,
-                                tint = Color(0xFF9EE6B8),
-                                modifier = Modifier.size(48.dp)
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(36.dp)
                             )
-                            Spacer(Modifier.height(12.dp))
                             Text(
                                 text = stringResource(R.string.camera_permission_rationale),
-                                style = MaterialTheme.typography.bodyMedium,
+                                style = MaterialTheme.typography.bodySmall,
                                 color = Color.White
                             )
-                            Spacer(Modifier.height(14.dp))
                             Button(
                                 onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
                                 modifier = Modifier.testTag("grant_camera_permission_button")
@@ -275,13 +325,7 @@ fun BarcodeScannerDialog(
                     }
                 }
 
-                Spacer(Modifier.height(14.dp))
-                Text(
-                    text = "Or enter barcode manually",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(12.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -290,7 +334,7 @@ fun BarcodeScannerDialog(
                     CompactSearchBar(
                         value = manualCode,
                         onValueChange = { manualCode = it },
-                        placeholder = "e.g. 8961001234567",
+                        placeholder = "Or type barcode manually...",
                         testTagName = "manual_barcode_input",
                         modifier = Modifier.weight(1f)
                     )

@@ -77,14 +77,11 @@ import com.example.data.local.ExpenseEntity
 import com.example.data.local.InvoiceWithItems
 import com.example.data.local.MonthlyTotalRow
 import com.example.data.local.ProductEntity
-import com.example.ui.theme.ExpiredBg
-import com.example.ui.theme.ExpiredCrimson
-import com.example.ui.theme.HarvestAmberSecondary
+import com.example.ui.theme.LocalSemanticColors
 import com.example.ui.theme.MonoCodeSmall
 import com.example.ui.theme.MonoFigureMedium
-import com.example.ui.theme.SafeStockBg
-import com.example.ui.theme.SafeStockGreen
 import com.example.util.Formatters
+import com.example.util.ProfitLossCalculator
 import com.example.util.ShareHelper
 import kotlinx.coroutines.launch
 import java.io.File
@@ -140,6 +137,7 @@ fun ReportsScreen(
     var allBusinessesScope by remember { mutableStateOf(false) }
     var focusedMonthIndex by remember(selectedYear, selectedMonth) { mutableIntStateOf(5) }
 
+    val semantic = LocalSemanticColors.current
     val currency = activeBusiness.resolvedCurrency()
     val primaryColor = MaterialTheme.colorScheme.primary
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
@@ -217,11 +215,21 @@ fun ReportsScreen(
         }
     }
 
-    val grossSales = remember(scopedInvoices) { scopedInvoices.sumOf { it.invoice.grandTotal } }
+    val scopedAllInvoices = if (allBusinessesScope) allInvoices else invoices
+    val scopedAllExpenses = if (allBusinessesScope) allExpenses else expenses
+    val monthPl = remember(scopedAllInvoices, scopedAllExpenses, scopedProducts, startMs, endMs) {
+        ProfitLossCalculator.calculate(
+            invoices = scopedAllInvoices,
+            expenses = scopedAllExpenses,
+            products = scopedProducts,
+            startMillis = startMs,
+            endMillis = endMs
+        )
+    }
+    val grossSales = monthPl.totalSales
     val totalExpenses = remember(scopedExpenses) { scopedExpenses.sumOf { it.amount } }
-    val netProfit = grossSales - totalExpenses
     val taxCollected = remember(scopedInvoices) { scopedInvoices.sumOf { it.invoice.taxAmount } }
-    val stockValuation = remember(scopedProducts) { scopedProducts.sumOf { it.stockQty * it.purchasePrice } }
+    val stockValuation = monthPl.inventoryCostValuation
 
     // Weekly buckets (W1..W4)
     val weeklyBuckets = remember(scopedInvoices, scopedExpenses) {
@@ -377,7 +385,7 @@ fun ReportsScreen(
                 }
             }
 
-            // Financial KPI Grid for Selected Month
+            // Financial P&L KPI Grid for Selected Month
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(
@@ -385,15 +393,15 @@ fun ReportsScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         KpiCard(
-                            label = "Gross Income (${scopedInvoices.size})",
+                            label = "Total Sales (${monthPl.invoiceCount})",
                             value = Formatters.formatPkr(grossSales, currency),
                             accent = primaryColor,
                             modifier = Modifier.weight(1f)
                         )
                         KpiCard(
-                            label = "Expenses (${scopedExpenses.size})",
-                            value = Formatters.formatPkr(totalExpenses, currency),
-                            accent = ExpiredCrimson,
+                            label = "Cost of Goods (COGS)",
+                            value = Formatters.formatPkr(monthPl.costOfGoodsSold, currency),
+                            accent = semantic.warningFg,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -402,24 +410,52 @@ fun ReportsScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         KpiCard(
-                            label = "Net Profit / Loss",
-                            value = Formatters.formatPkr(netProfit, currency),
-                            accent = if (netProfit >= 0) SafeStockGreen else ExpiredCrimson,
+                            label = String.format(Locale.US, "Gross Profit (%.0f%%)", monthPl.grossMarginPercent),
+                            value = Formatters.formatPkr(monthPl.grossProfit, currency),
+                            accent = if (monthPl.grossProfit >= 0) semantic.positiveFg else semantic.negativeFg,
+                            modifier = Modifier.weight(1f)
+                        )
+                        KpiCard(
+                            label = "Operating Expenses",
+                            value = Formatters.formatPkr(monthPl.operatingExpenses, currency),
+                            accent = semantic.negativeFg,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        KpiCard(
+                            label = if (monthPl.netProfit >= 0) "Net Profit" else "Net Loss",
+                            value = Formatters.formatPkr(monthPl.netProfit, currency),
+                            accent = if (monthPl.netProfit >= 0) semantic.positiveFg else semantic.negativeFg,
+                            modifier = Modifier.weight(1f)
+                        )
+                        KpiCard(
+                            label = "Stock Purchased",
+                            value = Formatters.formatPkr(monthPl.stockPurchaseSpend, currency),
+                            accent = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        KpiCard(
+                            label = "Inventory Asset Value",
+                            value = Formatters.formatPkr(stockValuation, currency),
+                            accent = MaterialTheme.colorScheme.tertiary,
                             modifier = Modifier.weight(1f)
                         )
                         KpiCard(
                             label = "Tax Collected",
                             value = Formatters.formatPkr(taxCollected, currency),
-                            accent = HarvestAmberSecondary,
+                            accent = semantic.warningFg,
                             modifier = Modifier.weight(1f)
                         )
                     }
-                    KpiCard(
-                        label = "Current Inventory Valuation (Purchase Cost)",
-                        value = Formatters.formatPkr(stockValuation, currency),
-                        accent = MaterialTheme.colorScheme.tertiary,
-                        modifier = Modifier.fillMaxWidth()
-                    )
                 }
             }
 
@@ -458,7 +494,7 @@ fun ReportsScreen(
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 LegendDot(primaryColor, "Income")
-                                LegendDot(ExpiredCrimson, "Expense")
+                                LegendDot(semantic.negativeFg, "Expense")
                             }
                         }
 
@@ -481,10 +517,10 @@ fun ReportsScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                     Text(
-                                        text = "Net: ${Formatters.formatCompactPkr(activeBucket.netProfit, currency)}",
+                                        text = "Cashflow: ${Formatters.formatCompactPkr(activeBucket.netProfit, currency)}",
                                         style = MaterialTheme.typography.labelLarge,
                                         fontWeight = FontWeight.Bold,
-                                        color = if (activeBucket.netProfit >= 0) SafeStockGreen else ExpiredCrimson
+                                        color = if (activeBucket.netProfit >= 0) semantic.positiveFg else semantic.negativeFg
                                     )
                                 }
                                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -503,7 +539,7 @@ fun ReportsScreen(
                                             text = Formatters.formatCompactPkr(activeBucket.expense, currency),
                                             style = MonoCodeSmall,
                                             fontWeight = FontWeight.SemiBold,
-                                            color = ExpiredCrimson
+                                            color = semantic.negativeFg
                                         )
                                     }
                                 }
@@ -515,7 +551,7 @@ fun ReportsScreen(
                             selectedIndex = focusedMonthIndex,
                             onSelectIndex = { focusedMonthIndex = it },
                             incomeColor = primaryColor,
-                            expenseColor = ExpiredCrimson,
+                            expenseColor = semantic.negativeFg,
                             gridColor = outlineColor,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -536,7 +572,7 @@ fun ReportsScreen(
                             Text(
                                 text = "6M Net: ${Formatters.formatCompactPkr(sixMonthNetTotal, currency)}",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (sixMonthNetTotal >= 0) SafeStockGreen else ExpiredCrimson,
+                                color = if (sixMonthNetTotal >= 0) semantic.positiveFg else semantic.negativeFg,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -547,8 +583,8 @@ fun ReportsScreen(
             // Business Growth Trend (6-Month Net Profit Line & Area Chart + MoM Growth Badge)
             item {
                 val isPositiveGrowth = momGrowthPercent >= 0.0
-                val growthBadgeBg = if (isPositiveGrowth) SafeStockBg else ExpiredBg
-                val growthBadgeFg = if (isPositiveGrowth) SafeStockGreen else ExpiredCrimson
+                val growthBadgeBg = if (isPositiveGrowth) semantic.positiveBg else semantic.negativeBg
+                val growthBadgeFg = if (isPositiveGrowth) semantic.positiveFg else semantic.negativeFg
 
                 Surface(
                     shape = MaterialTheme.shapes.large,
@@ -613,6 +649,7 @@ fun ReportsScreen(
                         BusinessGrowthAreaChart(
                             buckets = monthlyBuckets,
                             lineColor = primaryColor,
+                            negativeColor = semantic.negativeFg,
                             gridColor = outlineColor,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -638,13 +675,14 @@ fun ReportsScreen(
                             Text("Weekly Sales vs Expenses", style = MaterialTheme.typography.titleMedium)
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 LegendDot(primaryColor, "Sales")
-                                LegendDot(ExpiredCrimson, "Expenses")
+                                LegendDot(semantic.negativeFg, "Expenses")
                             }
                         }
                         Spacer(Modifier.height(14.dp))
                         WeeklyBarChart(
                             buckets = weeklyBuckets,
                             salesColor = primaryColor,
+                            expenseColor = semantic.negativeFg,
                             gridColor = outlineColor,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -776,14 +814,14 @@ fun ReportsScreen(
                                             Text(
                                                 text = "+${Formatters.formatCompactPkr(summary.salesTotal, currency)}",
                                                 style = MonoCodeSmall,
-                                                color = SafeStockGreen,
+                                                color = semantic.positiveFg,
                                                 fontWeight = FontWeight.SemiBold
                                             )
                                             if (summary.expenseTotal > 0) {
                                                 Text(
                                                     text = "-${Formatters.formatCompactPkr(summary.expenseTotal, currency)}",
                                                     style = MonoCodeSmall,
-                                                    color = ExpiredCrimson
+                                                    color = semantic.negativeFg
                                                 )
                                             }
                                         }
@@ -1026,6 +1064,7 @@ private fun MonthlyGroupedBarChart(
 private fun BusinessGrowthAreaChart(
     buckets: List<MonthlyChartBucket>,
     lineColor: Color,
+    negativeColor: Color,
     gridColor: Color,
     modifier: Modifier = Modifier
 ) {
@@ -1114,7 +1153,7 @@ private fun BusinessGrowthAreaChart(
 
             points.forEachIndexed { idx, pt ->
                 val isNeg = buckets[idx].netProfit < 0
-                val ptColor = if (isNeg) ExpiredCrimson else lineColor
+                val ptColor = if (isNeg) negativeColor else lineColor
                 drawCircle(color = ptColor, radius = 8f, center = pt)
                 drawCircle(color = dotFill, radius = 4f, center = pt)
             }
@@ -1187,6 +1226,7 @@ private fun LegendDot(color: Color, label: String) {
 private fun WeeklyBarChart(
     buckets: List<Triple<String, Double, Double>>,
     salesColor: Color,
+    expenseColor: Color,
     gridColor: Color,
     modifier: Modifier = Modifier
 ) {
@@ -1224,7 +1264,7 @@ private fun WeeklyBarChart(
                     cornerRadius = CornerRadius(6f, 6f)
                 )
                 drawRoundRect(
-                    color = ExpiredCrimson.copy(alpha = 0.85f),
+                    color = expenseColor.copy(alpha = 0.85f),
                     topLeft = Offset(centerX + gap / 2f, chartHeight - expH),
                     size = Size(barWidth, expH),
                     cornerRadius = CornerRadius(6f, 6f)

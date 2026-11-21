@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -87,17 +88,16 @@ import com.example.data.local.InvoicePaymentStatus
 import com.example.data.local.InvoiceWithItems
 import com.example.data.local.PricingTier
 import com.example.ui.components.AgriFilterChip
+import com.example.ui.components.AppConfirmDeleteDialog
 import com.example.ui.components.CompactSearchBar
 import com.example.ui.components.FormScreenDialog
 import com.example.ui.components.PerformedByPill
+import com.example.ui.components.ProofImagePickerCard
 import com.example.ui.theme.ExpiredCrimson
-import com.example.ui.theme.ExpiringSoonAmber
-import com.example.ui.theme.ExpiringSoonBg
+import com.example.ui.theme.LocalSemanticColors
 import com.example.ui.theme.MonoCodeSmall
 import com.example.ui.theme.MonoFigureLarge
 import com.example.ui.theme.MonoFigureMedium
-import com.example.ui.theme.SafeStockBg
-import com.example.ui.theme.SafeStockGreen
 import com.example.ui.theme.WhatsAppGreen
 import com.example.util.Formatters
 import com.example.util.InvoicePdfStyle
@@ -125,10 +125,13 @@ fun PosCheckoutSheet(
     onUpdatePayment: (String, Boolean, String) -> Unit,
     onUpdateCartQty: (String, Int) -> Unit,
     onUpdateCartPrice: (String, Double) -> Unit,
+    onAttachProofImage: (Uri) -> Unit,
+    onRemoveProofImage: () -> Unit,
     onHoldCart: () -> Unit,
     onCompleteSale: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val semantic = LocalSemanticColors.current
     val currency = business.resolvedCurrency()
     val paymentMethods = remember(business.paymentMethodsJson, business.businessType) {
         business.paymentMethods()
@@ -504,32 +507,40 @@ fun PosCheckoutSheet(
                 }
 
                 if (draft.changeToReturn > 0.01) {
-                    Surface(shape = RoundedCornerShape(8.dp), color = SafeStockBg) {
+                    Surface(shape = RoundedCornerShape(8.dp), color = semantic.positiveBg) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 10.dp, vertical = 6.dp),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("Change to Return", style = MaterialTheme.typography.labelLarge, color = SafeStockGreen)
-                            Text(Formatters.formatPkr(draft.changeToReturn, currency), style = MonoFigureMedium, color = SafeStockGreen)
+                            Text("Change to Return", style = MaterialTheme.typography.labelLarge, color = semantic.positiveFg)
+                            Text(Formatters.formatPkr(draft.changeToReturn, currency), style = MonoFigureMedium, color = semantic.positiveFg)
                         }
                     }
                 } else if (draft.balanceDue > 0.01) {
-                    Surface(shape = RoundedCornerShape(8.dp), color = ExpiringSoonBg) {
+                    Surface(shape = RoundedCornerShape(8.dp), color = semantic.warningBg) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 10.dp, vertical = 6.dp),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("Remaining Credit", style = MaterialTheme.typography.labelLarge, color = ExpiringSoonAmber)
-                            Text(Formatters.formatPkr(draft.balanceDue, currency), style = MonoFigureMedium, color = ExpiringSoonAmber)
+                            Text("Remaining Credit", style = MaterialTheme.typography.labelLarge, color = semantic.warningFg)
+                            Text(Formatters.formatPkr(draft.balanceDue, currency), style = MonoFigureMedium, color = semantic.warningFg)
                         }
                     }
                 }
             }
         }
+
+        ProofImagePickerCard(
+            label = "Proof of Payment / Reference Photo (optional)",
+            imagePath = draft.proofImagePath,
+            onPickImageUri = onAttachProofImage,
+            onRemoveImage = onRemoveProofImage,
+            testTagPrefix = "pos_proof"
+        )
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         CheckoutSummaryRow("Subtotal", Formatters.formatPkr(draft.subtotal, currency))
@@ -805,11 +816,12 @@ fun CustomerPickerBottomSheet(
                                     )
                                 }
                                 if (due > 0.01) {
-                                    Surface(shape = RoundedCornerShape(6.dp), color = ExpiringSoonBg) {
+                                    val semantic = LocalSemanticColors.current
+                                    Surface(shape = RoundedCornerShape(6.dp), color = semantic.warningBg) {
                                         Text(
                                             text = "Due ${Formatters.formatCompactPkr(due, currency)}",
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = ExpiringSoonAmber,
+                                            color = semantic.warningFg,
                                             fontWeight = FontWeight.Bold,
                                             modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                                         )
@@ -831,6 +843,7 @@ private fun PosCartLineRow(
     onQtyChange: (Int) -> Unit,
     onUnitPriceChange: (Double) -> Unit
 ) {
+    val semantic = LocalSemanticColors.current
     val isExpired = business.trackExpiry && Formatters.expiryStatus(line.product.expiryDateMillis) == ExpiryStatus.EXPIRED
     val currency = business.resolvedCurrency()
     var rateText by remember(line.product.id, line.unitPrice) { mutableStateOf(line.unitPrice.toString()) }
@@ -838,7 +851,7 @@ private fun PosCartLineRow(
     Surface(
         shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, if (isExpired) ExpiredCrimson else MaterialTheme.colorScheme.outlineVariant)
+        border = BorderStroke(1.dp, if (isExpired) semantic.negativeFg else MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
             Row(
@@ -861,7 +874,7 @@ private fun PosCartLineRow(
                             }
                         },
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (isExpired) ExpiredCrimson else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (isExpired) semantic.negativeFg else MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -1049,26 +1062,13 @@ fun ReturnSaleConfirmDialog(
     onDismiss: () -> Unit
 ) {
     val inv = invoiceWithItems.invoice
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Return Sale & Restock?") },
-        text = {
-            Text(
-                text = "Mark invoice #${inv.invoiceNumber} (${Formatters.formatPkr(inv.grandTotal, currencySymbol)}) as Returned and restore all ${invoiceWithItems.items.sumOf { it.quantity }} sold units back into inventory stock?"
-            )
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    onConfirm()
-                    onDismiss()
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = ExpiredCrimson)
-            ) { Text("Return & Restock", maxLines = 1, softWrap = false) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        }
+    AppConfirmDeleteDialog(
+        title = "Return Sale & Restock?",
+        itemLabel = "#${inv.invoiceNumber} • ${Formatters.formatPkr(inv.grandTotal, currencySymbol)}",
+        message = "Mark this invoice as Returned and restore all ${invoiceWithItems.items.sumOf { it.quantity }} sold units back into inventory stock?",
+        confirmText = "Return & Restock",
+        onConfirm = onConfirm,
+        onDismiss = onDismiss
     )
 }
 

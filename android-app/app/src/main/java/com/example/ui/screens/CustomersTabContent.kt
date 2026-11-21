@@ -26,17 +26,13 @@ import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.PointOfSale
 import androidx.compose.material.icons.filled.People
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,17 +53,13 @@ import com.example.data.local.CustomerEntity
 import com.example.data.local.InvoiceWithItems
 import com.example.data.local.PricingTier
 import com.example.ui.components.AgriFilterChip
+import com.example.ui.components.AppConfirmDeleteDialog
 import com.example.ui.components.CompactSearchBar
 import com.example.ui.components.EmptyStateCard
 import com.example.ui.components.FormScreenDialog
 import com.example.ui.components.PerformedByPill
-import com.example.ui.theme.ExpiredCrimson
-import com.example.ui.theme.ExpiringSoonAmber
-import com.example.ui.theme.ExpiringSoonBg
+import com.example.ui.theme.LocalSemanticColors
 import com.example.ui.theme.MonoCodeSmall
-import com.example.ui.theme.MonoFigureMedium
-import com.example.ui.theme.SafeStockBg
-import com.example.ui.theme.SafeStockGreen
 import com.example.util.Formatters
 
 private enum class CustomerFilter(val label: String) {
@@ -103,6 +95,7 @@ fun CustomersTabContent(
     onDeleteCustomer: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val semantic = LocalSemanticColors.current
     val currency = activeBusiness.resolvedCurrency()
     var searchQuery by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf(CustomerFilter.ALL) }
@@ -152,7 +145,7 @@ fun CustomersTabContent(
             CustomerMetricBox(
                 label = "Total Udhaar",
                 value = Formatters.formatCompactPkr(totalDirectoryCredit, currency),
-                accent = if (totalDirectoryCredit > 0.01) ExpiringSoonAmber else SafeStockGreen,
+                accent = if (totalDirectoryCredit > 0.01) semantic.warningFg else semantic.positiveFg,
                 modifier = Modifier.weight(1f)
             )
             Button(
@@ -254,22 +247,13 @@ fun CustomersTabContent(
     }
 
     deleteTarget?.let { target ->
-        AlertDialog(
-            onDismissRequest = { deleteTarget = null },
-            title = { Text("Delete Customer?") },
-            text = { Text("Remove ${target.name} from your customer directory? Existing invoices will remain intact.") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        onDeleteCustomer(target.id)
-                        deleteTarget = null
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = ExpiredCrimson)
-                ) { Text("Delete") }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) { Text("Cancel") }
-            }
+        AppConfirmDeleteDialog(
+            title = "Delete Customer?",
+            itemLabel = target.name,
+            message = "Remove this customer from your directory? Existing sales invoices will remain intact.",
+            confirmText = "Delete",
+            onConfirm = { onDeleteCustomer(target.id) },
+            onDismiss = { deleteTarget = null }
         )
     }
 }
@@ -320,6 +304,7 @@ private fun CustomerDirectoryCard(
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val semantic = LocalSemanticColors.current
     val currency = business.resolvedCurrency()
     val tier = PricingTier.fromName(customer.pricingTier)
     val hasCredit = creditDue > 0.01
@@ -402,7 +387,7 @@ private fun CustomerDirectoryCard(
                 Column(horizontalAlignment = Alignment.End) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = if (hasCredit) ExpiringSoonBg else SafeStockBg
+                        color = if (hasCredit) semantic.warningBg else semantic.positiveBg
                     ) {
                         Column(
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -411,7 +396,7 @@ private fun CustomerDirectoryCard(
                             Text(
                                 text = if (hasCredit) "Udhaar Due" else "Clear",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (hasCredit) ExpiringSoonAmber else SafeStockGreen,
+                                color = if (hasCredit) semantic.warningFg else semantic.positiveFg,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
                                 softWrap = false
@@ -419,7 +404,7 @@ private fun CustomerDirectoryCard(
                             Text(
                                 text = Formatters.formatPkr(creditDue.coerceAtLeast(0.0), currency),
                                 style = MonoCodeSmall,
-                                color = if (hasCredit) ExpiringSoonAmber else SafeStockGreen,
+                                color = if (hasCredit) semantic.warningFg else semantic.positiveFg,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                                 softWrap = false

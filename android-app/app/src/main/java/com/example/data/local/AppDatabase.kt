@@ -16,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         InvoiceItemEntity::class,
         ExpenseEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -99,6 +99,14 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE invoice_items ADD COLUMN costPrice REAL NOT NULL DEFAULT 0.0")
+                db.execSQL("ALTER TABLE invoices ADD COLUMN proofImagePath TEXT")
+                db.execSQL("ALTER TABLE expenses ADD COLUMN proofImagePath TEXT")
+            }
+        }
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -109,7 +117,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "hassan_agro_ledger.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                     .also { INSTANCE = it }
             }

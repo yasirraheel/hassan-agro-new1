@@ -30,9 +30,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -67,11 +65,9 @@ import com.example.data.remote.TeamPermissionItemDto
 import com.example.data.remote.TeamRoleDto
 import com.example.data.remote.TeamUserDto
 import com.example.ui.components.AgriFilterChip
+import com.example.ui.components.AppConfirmDeleteDialog
 import com.example.ui.components.FormScreenDialog
-import com.example.ui.theme.ExpiredBg
-import com.example.ui.theme.ExpiredCrimson
-import com.example.ui.theme.SafeStockBg
-import com.example.ui.theme.SafeStockGreen
+import com.example.ui.theme.LocalSemanticColors
 import com.example.viewmodel.TeamUiState
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -88,6 +84,7 @@ fun TeamManagementSection(
     onDeleteUser: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val semantic = LocalSemanticColors.current
     var showUserDialog by remember { mutableStateOf(false) }
     var editingUser by remember { mutableStateOf<TeamUserDto?>(null) }
     var showRoleDialog by remember { mutableStateOf(false) }
@@ -152,8 +149,8 @@ fun TeamManagementSection(
             item {
                 Surface(
                     shape = MaterialTheme.shapes.medium,
-                    color = ExpiredBg,
-                    border = BorderStroke(1.dp, ExpiredCrimson.copy(alpha = 0.35f))
+                    color = semantic.negativeBg,
+                    border = BorderStroke(1.dp, semantic.negativeFg.copy(alpha = 0.35f))
                 ) {
                     Row(
                         modifier = Modifier
@@ -165,7 +162,7 @@ fun TeamManagementSection(
                         Text(
                             text = teamState.errorMessage,
                             style = MaterialTheme.typography.bodySmall,
-                            color = ExpiredCrimson,
+                            color = semantic.negativeFg,
                             modifier = Modifier.weight(1f)
                         )
                         TextButton(onClick = onLoadTeam) { Text("Retry") }
@@ -260,12 +257,12 @@ fun TeamManagementSection(
                                     )
                                     Surface(
                                         shape = RoundedCornerShape(6.dp),
-                                        color = if (member.isActive) SafeStockBg else ExpiredBg
+                                        color = if (member.isActive) semantic.positiveBg else semantic.negativeBg
                                     ) {
                                         Text(
                                             text = if (member.isActive) "Active" else "Disabled",
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = if (member.isActive) SafeStockGreen else ExpiredCrimson,
+                                            color = if (member.isActive) semantic.positiveFg else semantic.negativeFg,
                                             fontWeight = FontWeight.SemiBold,
                                             maxLines = 1,
                                             softWrap = false,
@@ -533,42 +530,24 @@ fun TeamManagementSection(
     }
 
     deleteUserTarget?.let { target ->
-        AlertDialog(
-            onDismissRequest = { deleteUserTarget = null },
-            title = { Text("Remove Team Member?") },
-            text = { Text("Remove ${target.name} (${target.email}) from ${activeBusiness.name}? They will no longer be able to access this business.") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        onDeleteUser(target.id)
-                        deleteUserTarget = null
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = ExpiredCrimson)
-                ) { Text("Remove") }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteUserTarget = null }) { Text("Cancel") }
-            }
+        AppConfirmDeleteDialog(
+            title = "Remove Team Member?",
+            itemLabel = "${target.name} (${target.email})",
+            message = "Remove this member from ${activeBusiness.name}? They will immediately lose access to this business.",
+            confirmText = "Remove",
+            onConfirm = { onDeleteUser(target.id) },
+            onDismiss = { deleteUserTarget = null }
         )
     }
 
     deleteRoleTarget?.let { target ->
-        AlertDialog(
-            onDismissRequest = { deleteRoleTarget = null },
-            title = { Text("Delete Custom Role?") },
-            text = { Text("Delete role \"${target.name}\"? Make sure no team members are currently assigned to it.") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        onDeleteRole(target.id)
-                        deleteRoleTarget = null
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = ExpiredCrimson)
-                ) { Text("Delete") }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteRoleTarget = null }) { Text("Cancel") }
-            }
+        AppConfirmDeleteDialog(
+            title = "Delete Custom Role?",
+            itemLabel = target.name,
+            message = "Delete this custom role? Make sure no team members are currently assigned to it.",
+            confirmText = "Delete",
+            onConfirm = { onDeleteRole(target.id) },
+            onDismiss = { deleteRoleTarget = null }
         )
     }
 }

@@ -17,6 +17,7 @@ import com.example.data.local.PreferencesStore
 import com.example.data.local.ProductEntity
 import com.example.data.local.ServerSyncConfig
 import com.example.data.local.SyncStatus
+import com.example.data.local.ThemeAppearanceMode
 import com.example.data.remote.CustomServerClientFactory
 import com.example.data.remote.LoginRequest
 import com.example.data.remote.RegisterRequest
@@ -64,8 +65,13 @@ class HassanAgroRepository(
 
     val businessesFlow: Flow<List<BusinessEntity>> = businessDao.observeBusinesses()
     val activeBusinessIdFlow: Flow<String> = prefs.activeBusinessIdFlow
+    val appearanceModeFlow: Flow<ThemeAppearanceMode> = prefs.appearanceModeFlow
     val serverConfigFlow: Flow<ServerSyncConfig> = prefs.serverConfigFlow
     val authSessionFlow: Flow<AuthSession> = prefs.authSessionFlow
+
+    suspend fun setAppearanceMode(mode: ThemeAppearanceMode) {
+        prefs.setAppearanceMode(mode)
+    }
 
     val allProductsFlow: Flow<List<ProductEntity>> = productDao.observeAllActive()
     val allInvoicesFlow: Flow<List<InvoiceWithItems>> = invoiceDao.observeAllActive()
@@ -335,6 +341,23 @@ class HassanAgroRepository(
             }
         }
 
+    suspend fun saveProofImageFromUri(prefix: String, uri: Uri): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                val proofsDir = File(context.filesDir, "proofs").apply { mkdirs() }
+                val safePrefix = prefix.replace(Regex("[^a-zA-Z0-9_-]"), "").ifBlank { "proof" }
+                val targetFile = File(proofsDir, "${safePrefix}_${System.currentTimeMillis()}.jpg")
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(targetFile).use { output ->
+                        input.copyTo(output)
+                    }
+                } ?: return@withContext null
+                targetFile.absolutePath
+            } catch (_: Exception) {
+                null
+            }
+        }
+
     suspend fun saveCustomer(customer: CustomerEntity, performedById: String, performedByName: String) {
         customerDao.upsert(
             customer.copy(
@@ -353,6 +376,8 @@ class HassanAgroRepository(
     suspend fun findProductByBarcode(businessId: String, barcode: String): ProductEntity? =
         productDao.findByBarcode(businessId, barcode.trim())
 
+    suspend fun getProductById(productId: String): ProductEntity? = productDao.getById(productId)
+
     suspend fun saveProduct(product: ProductEntity, performedById: String, performedByName: String) {
         productDao.upsert(
             product.copy(
@@ -370,20 +395,22 @@ class HassanAgroRepository(
         newBatchNumber: String,
         newExpiryMillis: Long,
         performedById: String,
-        performedByName: String
-    ) {
-        val existing = productDao.getById(productId) ?: return
-        productDao.upsert(
-            existing.copy(
-                stockQty = existing.stockQty + addQty,
-                batchNumber = newBatchNumber.ifBlank { existing.batchNumber },
-                expiryDateMillis = newExpiryMillis,
-                performedById = performedById,
-                performedByName = performedByName,
-                updatedAt = System.currentTimeMillis(),
-                syncStatus = SyncStatus.PENDING.name
-            )
+        performedByName: String,
+        updatedPurchasePrice: Double? = null
+    ): ProductEntity? {
+        val existing = productDao.getById(productId) ?: return null
+        val updated = existing.copy(
+            stockQty = existing.stockQty + addQty,
+            purchasePrice = updatedPurchasePrice?.takeIf { it > 0.0 } ?: existing.purchasePrice,
+            batchNumber = newBatchNumber.ifBlank { existing.batchNumber },
+            expiryDateMillis = newExpiryMillis,
+            performedById = performedById,
+            performedByName = performedByName,
+            updatedAt = System.currentTimeMillis(),
+            syncStatus = SyncStatus.PENDING.name
         )
+        productDao.upsert(updated)
+        return updated
     }
 
     suspend fun deleteProduct(productId: String) {

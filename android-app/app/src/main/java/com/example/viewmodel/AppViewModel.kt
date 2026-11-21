@@ -18,14 +18,17 @@ import com.example.data.local.MonthlyTotalRow
 import com.example.data.local.PaymentMethod
 import com.example.data.local.PreferencesStore
 import com.example.data.local.PricingTier
+import com.example.data.local.ExpenseCategory
 import com.example.data.local.ProductEntity
 import com.example.data.local.ServerSyncConfig
+import com.example.data.local.ThemeAppearanceMode
 import com.example.data.remote.CustomServerClientFactory
 import com.example.data.remote.TeamPermissionItemDto
 import com.example.data.remote.TeamRoleDto
 import com.example.data.remote.TeamUserDto
 import com.example.data.repository.HassanAgroRepository
 import com.example.util.CsvExporter
+import com.example.util.DashboardPeriod
 import com.example.util.Formatters
 import com.example.util.InvoicePdfGenerator
 import com.example.util.InvoicePdfStyle
@@ -100,7 +103,8 @@ data class BillingDraftState(
     val paymentMethod: String = PaymentMethod.CASH.label,
     val isCreditSale: Boolean = false,
     val amountReceivedText: String = "",
-    val notes: String = ""
+    val notes: String = "",
+    val proofImagePath: String? = null
 ) {
     val subtotal: Double get() = cartLines.sumOf { it.lineTotal }
     val discountAmount: Double get() = (discountText.toDoubleOrNull() ?: 0.0).coerceIn(0.0, subtotal)
@@ -166,11 +170,35 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         defaultTaxRate = 0.0
     )
 
+    // Nullable until DataStore emits the real persisted session — prevents Login screen flash on startup!
+    val authSessionLoaded: StateFlow<AuthSession?> = repository.authSessionFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
     val authSession: StateFlow<AuthSession> = repository.authSessionFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, AuthSession())
 
+    val appearanceMode: StateFlow<ThemeAppearanceMode> = repository.appearanceModeFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ThemeAppearanceMode.SYSTEM)
+
+    private val _dashboardPeriod = MutableStateFlow(DashboardPeriod.THIS_MONTH)
+    val dashboardPeriod: StateFlow<DashboardPeriod> = _dashboardPeriod.asStateFlow()
+
     private val _authUiState = MutableStateFlow(AuthUiState())
     val authUiState: StateFlow<AuthUiState> = _authUiState.asStateFlow()
+
+    fun setAppearanceMode(mode: ThemeAppearanceMode) {
+        viewModelScope.launch {
+            repository.setAppearanceMode(mode)
+        }
+    }
+
+    fun setDashboardPeriod(period: DashboardPeriod) {
+        _dashboardPeriod.value = period
+    }
+
+    suspend fun saveProofImage(prefix: String, uri: Uri): String? {
+        return repository.saveProofImageFromUri(prefix, uri)
+    }
 
     // Strictly scope visible businesses to the authenticated admin's allowedBusinessIds
     val businesses: StateFlow<List<BusinessEntity>> = combine(
@@ -466,10 +494,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // --- Inventory Management ---
-    fun saveProduct(product: ProductEntity) {
+    fun saveProduct(
+        product: ProductEntity,
+        recordStockPurchaseExpense: Boolean = false,
+        purchasePaymentMethod: String = PaymentMethod.CASH.label
+    ) {
         viewModelScope.launch {
             val business = activeBusiness.value
             val actor = authSession.value
+            val previousProduct = repository.getProductById(product.id)
+            val addedQty = if (previousProduct == null) {
+                product.stockQty.coerceAtLeast(0)
+            } else {
+                (product.stockQty - previousProduct.stockQty).coerceAtLeast(0)
+            }
             val enriched = if (product.purchasePrice > 0.0 && (
                     product.distributorPrice <= 0.0 ||
                     product.wholesalerPrice <= 0.0 ||
@@ -501,7 +539,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 performedById = actor.userId,
                 performedByName = actor.userName
             )
-            emitMessage("Saved ${enriched.name}")
+            val totalPurchaseCost = addedQty * enriched.purchasePrice
+            if (recordStockPurchaseExpense && totalPurchaseCost > 0.0) {
+                val currency = business.resolvedCurrency()
+                val stockExpense = ExpenseEntity(
+                    businessId = business.id,
+                    title = "Stock Purchase: ${enriched.name}",
+                    category = ExpenseCategory.STOCK_PURCHASE.label,
+                    amount = totalPurchaseCost,
+                    paymentMethod = purchasePaymentMethod.ifBlank { PaymentMethod.CASH.label },
+                    payee = enriched.brand.trim(),
+                    notes = "$addedQty units × ${Formatters.formatPkr(enriched.purchasePrice, currency)}",
+                    expenseDateMillis = System.currentTimeMillis()
+                )
+                repository.saveExpense(stockExpense, actor.userId, actor.userName)
+                emitMessage("Saved ${enriched.name} & logged ${Formatters.formatPkr(totalPurchaseCost, currency)} stock purchase")
+            } else {
+                emitMessage("Saved ${enriched.name}")
+            }
             triggerAutoSyncIfEnabled()
         }
     }
@@ -510,19 +565,42 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         productId: String,
         addQty: Int,
         newBatchNumber: String,
-        newExpiryMillis: Long
+        newExpiryMillis: Long,
+        updatedPurchasePrice: Double? = null,
+        recordStockPurchaseExpense: Boolean = false,
+        purchasePaymentMethod: String = PaymentMethod.CASH.label
     ) {
         viewModelScope.launch {
+            val business = activeBusiness.value
             val actor = authSession.value
-            repository.restockProduct(
+            val updated = repository.restockProduct(
                 productId = productId,
                 addQty = addQty,
                 newBatchNumber = newBatchNumber,
                 newExpiryMillis = newExpiryMillis,
                 performedById = actor.userId,
-                performedByName = actor.userName
+                performedByName = actor.userName,
+                updatedPurchasePrice = updatedPurchasePrice
             )
-            emitMessage("Added $addQty units to stock")
+            val unitCost = updatedPurchasePrice?.takeIf { it > 0.0 } ?: updated?.purchasePrice ?: 0.0
+            val totalPurchaseCost = addQty.coerceAtLeast(0) * unitCost
+            if (recordStockPurchaseExpense && updated != null && totalPurchaseCost > 0.0) {
+                val currency = business.resolvedCurrency()
+                val stockExpense = ExpenseEntity(
+                    businessId = business.id,
+                    title = "Restock: ${updated.name}",
+                    category = ExpenseCategory.STOCK_PURCHASE.label,
+                    amount = totalPurchaseCost,
+                    paymentMethod = purchasePaymentMethod.ifBlank { PaymentMethod.CASH.label },
+                    payee = updated.brand.trim(),
+                    notes = "+$addQty units × ${Formatters.formatPkr(unitCost, currency)}",
+                    expenseDateMillis = System.currentTimeMillis()
+                )
+                repository.saveExpense(stockExpense, actor.userId, actor.userName)
+                emitMessage("Restocked +$addQty units & logged ${Formatters.formatPkr(totalPurchaseCost, currency)}")
+            } else {
+                emitMessage("Added $addQty units to stock")
+            }
             triggerAutoSyncIfEnabled()
         }
     }
@@ -708,6 +786,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    fun attachBillingProofImage(uri: Uri) {
+        viewModelScope.launch {
+            val savedPath = repository.saveProofImageFromUri("pos_proof", uri)
+            if (savedPath != null) {
+                _billingDraft.update { it.copy(proofImagePath = savedPath) }
+                emitMessage("Payment proof image attached")
+            } else {
+                emitMessage("Could not attach image")
+            }
+        }
+    }
+
+    fun clearBillingProofImage() {
+        _billingDraft.update { it.copy(proofImagePath = null) }
+    }
+
     fun finalizeInvoiceAndGeneratePdf() {
         val draft = _billingDraft.value
         if (draft.cartLines.isEmpty()) {
@@ -756,6 +850,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 balanceDue = draft.balanceDue,
                 isReturned = false,
                 notes = draft.notes.trim(),
+                proofImagePath = draft.proofImagePath,
                 performedById = actor.userId,
                 performedByName = actor.userName
             )
@@ -768,6 +863,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     batchNumber = line.product.batchNumber,
                     quantity = line.quantity,
                     unitPrice = line.unitPrice,
+                    costPrice = line.product.purchasePrice,
                     lineTotal = line.lineTotal
                 )
             }

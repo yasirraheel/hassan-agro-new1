@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PauseCircleOutline
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.People
@@ -80,19 +82,16 @@ import com.example.ui.components.CompactSearchBar
 import com.example.ui.components.EmptyStateCard
 import com.example.ui.components.ExpiryBadge
 import com.example.ui.components.PerformedByPill
-import com.example.ui.theme.ExpiredBg
-import com.example.ui.theme.ExpiredCrimson
-import com.example.ui.theme.ExpiringSoonAmber
-import com.example.ui.theme.ExpiringSoonBg
+import com.example.ui.components.ProofImageViewerDialog
+import com.example.ui.theme.LocalSemanticColors
 import com.example.ui.theme.MonoCodeSmall
 import com.example.ui.theme.MonoFigureMedium
-import com.example.ui.theme.SafeStockBg
-import com.example.ui.theme.SafeStockGreen
 import com.example.util.Formatters
 import com.example.util.InvoicePdfStyle
 import com.example.viewmodel.BillingDraftState
 import com.example.viewmodel.GeneratedInvoiceEvent
 import com.example.viewmodel.HeldCart
+import java.io.File
 
 private enum class SalesFilter(val label: String) {
     ALL("All"),
@@ -127,6 +126,8 @@ fun BillingScreen(
     onAddProductToCart: (ProductEntity) -> Unit,
     onUpdateCartQty: (String, Int) -> Unit,
     onUpdateCartPrice: (String, Double) -> Unit,
+    onAttachProofImage: (Uri) -> Unit,
+    onRemoveProofImage: () -> Unit,
     onClearCart: () -> Unit,
     onHoldCart: () -> Unit,
     onResumeHeldCart: (String) -> Unit,
@@ -141,6 +142,7 @@ fun BillingScreen(
     onDismissGeneratedInvoice: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val semantic = LocalSemanticColors.current
     val currency = activeBusiness.resolvedCurrency()
     val customCategories = remember(activeBusiness.productCategoriesJson, activeBusiness.businessType) {
         activeBusiness.productCategories()
@@ -156,6 +158,7 @@ fun BillingScreen(
     var quickCreateCustomerPrefill by remember { mutableStateOf<Pair<String, String>?>(null) }
     var paymentTargetInvoice by remember { mutableStateOf<InvoiceWithItems?>(null) }
     var returnTargetInvoice by remember { mutableStateOf<InvoiceWithItems?>(null) }
+    var viewingProofInvoice by remember { mutableStateOf<InvoiceWithItems?>(null) }
 
     val selectedPosCustomer = remember(draft.customerId, customers) {
         customers.firstOrNull { it.id == draft.customerId }
@@ -542,9 +545,9 @@ fun BillingScreen(
                             .padding(horizontal = 16.dp, vertical = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        SalesMetricChip("Today Sales", Formatters.formatCompactPkr(todaySales, currency), SafeStockGreen, Modifier.weight(1f))
+                        SalesMetricChip("Today Sales", Formatters.formatCompactPkr(todaySales, currency), semantic.positiveFg, Modifier.weight(1f))
                         SalesMetricChip("Collected", Formatters.formatCompactPkr(todayCollected, currency), MaterialTheme.colorScheme.tertiary, Modifier.weight(1f))
-                        SalesMetricChip("Credit Due", Formatters.formatCompactPkr(pendingCreditTotal, currency), ExpiringSoonAmber, Modifier.weight(1f))
+                        SalesMetricChip("Credit Due", Formatters.formatCompactPkr(pendingCreditTotal, currency), semantic.warningFg, Modifier.weight(1f))
                     }
 
                     Row(
@@ -586,6 +589,7 @@ fun BillingScreen(
                                     canCollectCredit = canCollectCredit,
                                     canReturnSale = canReturnSale,
                                     onSharePdf = { onOpenPastInvoice(entry) },
+                                    onViewProof = { viewingProofInvoice = entry },
                                     onCollectPayment = { paymentTargetInvoice = entry },
                                     onReturnRestock = { returnTargetInvoice = entry }
                                 )
@@ -628,6 +632,8 @@ fun BillingScreen(
             onUpdatePayment = onUpdatePayment,
             onUpdateCartQty = onUpdateCartQty,
             onUpdateCartPrice = onUpdateCartPrice,
+            onAttachProofImage = onAttachProofImage,
+            onRemoveProofImage = onRemoveProofImage,
             onHoldCart = onHoldCart,
             onCompleteSale = onFinalizeInvoice,
             onDismiss = { showCheckoutSheet = false }
@@ -700,6 +706,19 @@ fun BillingScreen(
         )
     }
 
+    viewingProofInvoice?.let { entry ->
+        val path = entry.invoice.proofImagePath
+        if (!path.isNullOrBlank() && File(path).exists()) {
+            ProofImageViewerDialog(
+                title = "Payment Proof • #${entry.invoice.invoiceNumber}",
+                imagePath = path,
+                onDismiss = { viewingProofInvoice = null }
+            )
+        } else {
+            viewingProofInvoice = null
+        }
+    }
+
     if (generatedInvoice != null) {
         InvoiceShareDialog(
             event = generatedInvoice,
@@ -718,6 +737,7 @@ private fun PosProductTile(
     onTapAdd: () -> Unit,
     onQtyChange: (Int) -> Unit
 ) {
+    val semantic = LocalSemanticColors.current
     val isExpired = business.trackExpiry && Formatters.expiryStatus(product.expiryDateMillis) == ExpiryStatus.EXPIRED
     val outOfStock = product.stockQty <= 0
     val tierPrice = product.priceForTier(pricingTier)
@@ -734,7 +754,7 @@ private fun PosProductTile(
         border = BorderStroke(
             width = if (qtyInCart > 0) 1.5.dp else 1.dp,
             color = when {
-                isExpired -> ExpiredCrimson.copy(alpha = 0.7f)
+                isExpired -> semantic.negativeFg.copy(alpha = 0.7f)
                 qtyInCart > 0 -> MaterialTheme.colorScheme.primary
                 else -> MaterialTheme.colorScheme.outlineVariant
             }
@@ -751,12 +771,12 @@ private fun PosProductTile(
             ) {
                 Surface(
                     shape = RoundedCornerShape(6.dp),
-                    color = if (outOfStock) ExpiredBg else SafeStockBg
+                    color = if (outOfStock) semantic.negativeBg else semantic.positiveBg
                 ) {
                     Text(
                         text = if (outOfStock) "Out of Stock" else "${product.stockQty} left",
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (outOfStock) ExpiredCrimson else SafeStockGreen,
+                        color = if (outOfStock) semantic.negativeFg else semantic.positiveFg,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         softWrap = false,
@@ -858,16 +878,21 @@ private fun SalesInvoiceCard(
     canCollectCredit: Boolean,
     canReturnSale: Boolean,
     onSharePdf: () -> Unit,
+    onViewProof: () -> Unit,
     onCollectPayment: () -> Unit,
     onReturnRestock: () -> Unit
 ) {
+    val semantic = LocalSemanticColors.current
     val inv = entry.invoice
     val currency = business.resolvedCurrency()
     val status = InvoicePaymentStatus.fromName(inv.paymentStatus)
+    val hasProofImage = remember(inv.proofImagePath) {
+        !inv.proofImagePath.isNullOrBlank() && File(inv.proofImagePath).exists()
+    }
     val (statusBg, statusFg) = when {
-        inv.isReturned || status == InvoicePaymentStatus.RETURNED -> ExpiredBg to ExpiredCrimson
-        status == InvoicePaymentStatus.PAID -> SafeStockBg to SafeStockGreen
-        else -> ExpiringSoonBg to ExpiringSoonAmber
+        inv.isReturned || status == InvoicePaymentStatus.RETURNED -> semantic.negativeBg to semantic.negativeFg
+        status == InvoicePaymentStatus.PAID -> semantic.positiveBg to semantic.positiveFg
+        else -> semantic.warningBg to semantic.warningFg
     }
 
     Surface(
@@ -932,7 +957,7 @@ private fun SalesInvoiceCard(
                         Text(
                             text = "Due: ${Formatters.formatPkr(inv.balanceDue, currency)}",
                             style = MaterialTheme.typography.labelSmall,
-                            color = ExpiringSoonAmber,
+                            color = semantic.warningFg,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             softWrap = false
@@ -956,6 +981,19 @@ private fun SalesInvoiceCard(
                     Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(15.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("PDF / Share", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
+                }
+                if (hasProofImage) {
+                    OutlinedButton(
+                        onClick = onViewProof,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier
+                            .height(34.dp)
+                            .testTag("invoice_view_proof_${inv.id}")
+                    ) {
+                        Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Proof", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
+                    }
                 }
                 if (canCollectCredit && !inv.isReturned && inv.balanceDue > 0.01) {
                     Button(

@@ -39,12 +39,15 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Tune
@@ -91,12 +94,15 @@ import com.example.data.local.PricingMarginRules
 import com.example.data.local.PricingTier
 import com.example.data.local.ServerSyncConfig
 import com.example.data.local.TaxPreset
+import com.example.data.local.ThemeAppearanceMode
 import com.example.ui.components.AgriFilterChip
+import com.example.ui.components.AppConfirmDeleteDialog
 import com.example.ui.components.BusinessLogoAvatar
 import com.example.ui.components.EditableTagListEditor
 import com.example.ui.components.FormScreenDialog
 import com.example.ui.components.ThemeColorSwatchPicker
 import com.example.ui.theme.AppThemeOption
+import com.example.ui.theme.LocalSemanticColors
 import com.example.ui.theme.MonoCodeSmall
 import com.example.util.Formatters
 import com.example.viewmodel.SyncUiState
@@ -114,6 +120,7 @@ fun SettingsScreen(
     authSession: AuthSession,
     businesses: List<BusinessEntity>,
     activeBusiness: BusinessEntity,
+    appearanceMode: ThemeAppearanceMode,
     serverConfig: ServerSyncConfig,
     syncState: SyncUiState,
     teamState: TeamUiState,
@@ -121,6 +128,7 @@ fun SettingsScreen(
     canManageBusinesses: Boolean,
     canManageTeam: Boolean,
     canManageSettings: Boolean,
+    onAppearanceModeChange: (ThemeAppearanceMode) -> Unit,
     onSwitchBusiness: (String) -> Unit,
     onSaveBusiness: (BusinessEntity, Boolean) -> Unit,
     onDeleteBusiness: (String) -> Unit,
@@ -141,6 +149,7 @@ fun SettingsScreen(
 ) {
     BackHandler(onBack = onBack)
 
+    val semantic = LocalSemanticColors.current
     // Strict simplification for non-owner staff / moderators / salesmen
     val isRestrictedStaff = !canManageBusinesses && !canManageTeam && !canManageSettings
 
@@ -157,6 +166,7 @@ fun SettingsScreen(
     }
     var editingBusiness by remember { mutableStateOf<BusinessEntity?>(null) }
     var showAddBusinessSheet by remember { mutableStateOf(false) }
+    var deleteTargetBusiness by remember { mutableStateOf<BusinessEntity?>(null) }
 
     val logoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -320,7 +330,61 @@ fun SettingsScreen(
                                 ) {
                                     Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(Modifier.width(8.dp))
-                                    Text("Sign Out & Switch Admin Account", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                                    Text("Sign Out", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
+                    }
+
+                    // Appearance (Dark / Light / System) Card — available to all roles
+                    item {
+                        Surface(
+                            shape = MaterialTheme.shapes.large,
+                            color = MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (semantic.isDark) Icons.Default.DarkMode else Icons.Default.LightMode,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("App Appearance", style = MaterialTheme.typography.titleMedium)
+                                        Text(
+                                            text = "High-contrast Dark & Light themes for every business color preset",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                                    ThemeAppearanceMode.entries.forEachIndexed { idx, mode ->
+                                        val icon = when (mode) {
+                                            ThemeAppearanceMode.SYSTEM -> Icons.Default.BrightnessAuto
+                                            ThemeAppearanceMode.LIGHT -> Icons.Default.LightMode
+                                            ThemeAppearanceMode.DARK -> Icons.Default.DarkMode
+                                        }
+                                        SegmentedButton(
+                                            selected = appearanceMode == mode,
+                                            onClick = { onAppearanceModeChange(mode) },
+                                            shape = SegmentedButtonDefaults.itemShape(idx, ThemeAppearanceMode.entries.size),
+                                            icon = {
+                                                Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            },
+                                            modifier = Modifier.testTag("settings_appearance_${mode.name.lowercase()}")
+                                        ) {
+                                            Text(mode.label, maxLines = 1, softWrap = false)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -489,17 +553,18 @@ fun SettingsScreen(
                         items(businesses, key = { it.id }) { biz ->
                             val isSelected = biz.id == activeBusiness.id
                             val bizTheme = AppThemeOption.fromKey(biz.themeKey)
+                            val accentColor = if (semantic.isDark) bizTheme.darkPrimaryColor else bizTheme.primaryColor
                             Surface(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable { onSwitchBusiness(biz.id) }
                                     .testTag("settings_business_card_${biz.id}"),
                                 shape = MaterialTheme.shapes.medium,
-                                color = if (isSelected) bizTheme.primaryContainerColor.copy(alpha = 0.45f)
+                                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
                                 else MaterialTheme.colorScheme.surface,
                                 border = BorderStroke(
                                     width = if (isSelected) 1.5.dp else 1.dp,
-                                    color = if (isSelected) bizTheme.primaryColor else MaterialTheme.colorScheme.outlineVariant
+                                    color = if (isSelected) accentColor else MaterialTheme.colorScheme.outlineVariant
                                 )
                             ) {
                                 Row(
@@ -527,7 +592,7 @@ fun SettingsScreen(
                                         Icon(
                                             Icons.Default.CheckCircle,
                                             contentDescription = "Active",
-                                            tint = bizTheme.primaryColor
+                                            tint = accentColor
                                         )
                                     }
                                     if (canManageBusinesses) {
@@ -535,7 +600,7 @@ fun SettingsScreen(
                                             Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.cd_edit_item))
                                         }
                                         if (businesses.size > 1) {
-                                            IconButton(onClick = { onDeleteBusiness(biz.id) }) {
+                                            IconButton(onClick = { deleteTargetBusiness = biz }) {
                                                 Icon(
                                                     Icons.Default.Delete,
                                                     contentDescription = stringResource(R.string.cd_delete_item),
@@ -587,6 +652,17 @@ fun SettingsScreen(
                 showAddBusinessSheet = false
                 editingBusiness = null
             }
+        )
+    }
+
+    deleteTargetBusiness?.let { target ->
+        AppConfirmDeleteDialog(
+            title = "Delete Business?",
+            itemLabel = target.name,
+            message = "Delete this business profile from your workspace? All its stock, invoices, and expenses will be removed.",
+            confirmText = "Delete",
+            onConfirm = { onDeleteBusiness(target.id) },
+            onDismiss = { deleteTargetBusiness = null }
         )
     }
 }

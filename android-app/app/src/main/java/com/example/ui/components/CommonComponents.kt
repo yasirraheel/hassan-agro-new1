@@ -89,12 +89,7 @@ import com.example.data.local.BusinessEntity
 import com.example.data.local.ExpiryStatus
 import com.example.data.local.ServerSyncConfig
 import com.example.ui.theme.AppThemeOption
-import com.example.ui.theme.ExpiredBg
-import com.example.ui.theme.ExpiredCrimson
-import com.example.ui.theme.ExpiringSoonAmber
-import com.example.ui.theme.ExpiringSoonBg
-import com.example.ui.theme.SafeStockBg
-import com.example.ui.theme.SafeStockGreen
+import com.example.ui.theme.LocalSemanticColors
 import com.example.util.Formatters
 import com.example.viewmodel.SyncUiState
 import java.io.File
@@ -355,6 +350,7 @@ fun ThemeColorSwatchPicker(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val isDark = LocalSemanticColors.current.isDark
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -363,18 +359,20 @@ fun ThemeColorSwatchPicker(
     ) {
         AppThemeOption.entries.forEach { theme ->
             val selected = theme.key.equals(selectedThemeKey, ignoreCase = true)
+            val accent = if (isDark) theme.darkPrimaryColor else theme.primaryColor
+            val containerBg = if (isDark) theme.darkPrimaryContainerColor else theme.primaryContainerColor.copy(alpha = 0.6f)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .clip(RoundedCornerShape(12.dp))
                     .clickable { onSelect(theme.key) }
                     .background(
-                        if (selected) theme.primaryContainerColor.copy(alpha = 0.6f)
-                        else Color.Transparent
+                        if (selected) containerBg
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
                     )
                     .border(
                         width = if (selected) 1.5.dp else 1.dp,
-                        color = if (selected) theme.primaryColor else MaterialTheme.colorScheme.outlineVariant,
+                        color = if (selected) accent else MaterialTheme.colorScheme.outlineVariant,
                         shape = RoundedCornerShape(12.dp)
                     )
                     .padding(horizontal = 10.dp, vertical = 8.dp)
@@ -384,7 +382,7 @@ fun ThemeColorSwatchPicker(
                     modifier = Modifier
                         .size(32.dp)
                         .clip(CircleShape)
-                        .background(theme.primaryColor),
+                        .background(accent),
                     contentAlignment = Alignment.Center
                 ) {
                     if (selected) {
@@ -619,6 +617,7 @@ fun SyncStatusBadge(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val semantic = LocalSemanticColors.current
     val (bgColor, fgColor, icon, label) = when {
         syncState.isSyncing -> Quad(
             MaterialTheme.colorScheme.tertiaryContainer,
@@ -633,14 +632,14 @@ fun SyncStatusBadge(
             "Offline"
         )
         pendingCount > 0 -> Quad(
-            ExpiringSoonBg,
-            ExpiringSoonAmber,
+            semantic.warningBg,
+            semantic.warningFg,
             Icons.Default.CloudSync,
             "Sync ($pendingCount)"
         )
         else -> Quad(
-            SafeStockBg,
-            SafeStockGreen,
+            semantic.positiveBg,
+            semantic.positiveFg,
             Icons.Default.CloudDone,
             if (syncState.wsConnected) "Live" else "Synced"
         )
@@ -681,12 +680,13 @@ private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, v
 
 @Composable
 fun ExpiryBadge(expiryMillis: Long, modifier: Modifier = Modifier) {
+    val semantic = LocalSemanticColors.current
     val status = Formatters.expiryStatus(expiryMillis)
     val (bg, fg) = when (status) {
-        ExpiryStatus.EXPIRED -> ExpiredBg to ExpiredCrimson
-        ExpiryStatus.EXPIRING_SOON -> ExpiringSoonBg to ExpiringSoonAmber
+        ExpiryStatus.EXPIRED -> semantic.negativeBg to semantic.negativeFg
+        ExpiryStatus.EXPIRING_SOON -> semantic.warningBg to semantic.warningFg
         ExpiryStatus.WATCH -> MaterialTheme.colorScheme.tertiaryContainer to MaterialTheme.colorScheme.tertiary
-        ExpiryStatus.SAFE -> SafeStockBg to SafeStockGreen
+        ExpiryStatus.SAFE -> semantic.positiveBg to semantic.positiveFg
     }
     Surface(
         modifier = modifier,
@@ -807,9 +807,12 @@ fun BusinessSwitcherSheet(
             )
             Spacer(Modifier.height(14.dp))
 
+            val isDark = LocalSemanticColors.current.isDark
             businesses.forEach { biz ->
                 val isSelected = biz.id == activeBusiness.id
                 val bizTheme = AppThemeOption.fromKey(biz.themeKey)
+                val accent = if (isDark) bizTheme.darkPrimaryColor else bizTheme.primaryColor
+                val selectedBg = if (isDark) bizTheme.darkPrimaryContainerColor else bizTheme.primaryContainerColor.copy(alpha = 0.55f)
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -820,11 +823,10 @@ fun BusinessSwitcherSheet(
                             onDismiss()
                         },
                     shape = MaterialTheme.shapes.medium,
-                    color = if (isSelected) bizTheme.primaryContainerColor.copy(alpha = 0.55f)
-                    else MaterialTheme.colorScheme.surface,
+                    color = if (isSelected) selectedBg else MaterialTheme.colorScheme.surface,
                     border = BorderStroke(
                         width = if (isSelected) 1.5.dp else 1.dp,
-                        color = if (isSelected) bizTheme.primaryColor else MaterialTheme.colorScheme.outlineVariant
+                        color = if (isSelected) accent else MaterialTheme.colorScheme.outlineVariant
                     )
                 ) {
                     Row(
@@ -855,7 +857,7 @@ fun BusinessSwitcherSheet(
                             Icon(
                                 imageVector = Icons.Default.CheckCircle,
                                 contentDescription = "Active business",
-                                tint = bizTheme.primaryColor
+                                tint = accent
                             )
                         }
                     }

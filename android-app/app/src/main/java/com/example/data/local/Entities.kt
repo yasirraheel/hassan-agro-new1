@@ -239,6 +239,7 @@ data class InvoiceEntity(
     val balanceDue: Double = 0.0,
     val isReturned: Boolean = false,
     val notes: String = "",
+    val proofImagePath: String? = null,
     val performedById: String = "",
     val performedByName: String = "",
     val createdAt: Long = System.currentTimeMillis(),
@@ -260,6 +261,7 @@ data class InvoiceItemEntity(
     val batchNumber: String = "",
     val quantity: Int,
     val unitPrice: Double,
+    val costPrice: Double = 0.0,
     val lineTotal: Double
 )
 
@@ -285,6 +287,7 @@ data class ExpenseEntity(
     val paymentMethod: String = PaymentMethod.CASH.label,
     val payee: String = "",
     val notes: String = "",
+    val proofImagePath: String? = null,
     val performedById: String = "",
     val performedByName: String = "",
     val expenseDateMillis: Long = System.currentTimeMillis(),

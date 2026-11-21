@@ -68,6 +68,7 @@ import com.example.data.local.BusinessTypePreset
 import com.example.ui.components.AgriFilterChip
 import com.example.ui.components.ThemeColorSwatchPicker
 import com.example.ui.theme.LocalAppThemeOption
+import com.example.ui.theme.LocalSemanticColors
 import com.example.viewmodel.AuthUiState
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -92,6 +93,7 @@ fun LoginScreen(
     modifier: Modifier = Modifier
 ) {
     val activeTheme = LocalAppThemeOption.current
+    val semantic = LocalSemanticColors.current
 
     var selectedTab by remember { mutableIntStateOf(0) } // 0 = Sign In, 1 = Create Business
     var serverUrl by remember(initialServerUrl) { mutableStateOf(initialServerUrl) }
@@ -138,7 +140,11 @@ fun LoginScreen(
                     modifier = Modifier
                         .background(
                             Brush.linearGradient(
-                                colors = listOf(activeTheme.heroStart, activeTheme.heroEnd)
+                                colors = if (semantic.isDark) {
+                                    listOf(activeTheme.darkHeroStart, activeTheme.darkHeroEnd)
+                                } else {
+                                    listOf(activeTheme.heroStart, activeTheme.heroEnd)
+                                }
                             )
                         )
                         .padding(22.dp)

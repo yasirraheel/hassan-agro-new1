@@ -1,6 +1,17 @@
 package com.example.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -11,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Dashboard
@@ -49,6 +61,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -64,6 +78,7 @@ import com.example.R
 import com.example.data.local.AppPermission
 import com.example.data.local.ProductEntity
 import com.example.ui.components.AppNavigationDrawerSheet
+import com.example.ui.components.AppSplashScreen
 import com.example.ui.components.BarcodeScannerDialog
 import com.example.ui.components.BusinessSwitcherPill
 import com.example.ui.components.BusinessSwitcherSheet
@@ -82,6 +97,7 @@ import com.example.ui.theme.AppThemeOption
 import com.example.ui.theme.HassanAgroTheme
 import com.example.viewmodel.AppViewModel
 import com.example.viewmodel.InventoryFilter
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 object NavRoutes {
@@ -114,30 +130,70 @@ private enum class ScanTarget {
     BILLING_CART
 }
 
+private enum class AppRootStage {
+    SPLASH,
+    LOGIN,
+    AUTHENTICATED
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HassanAgroApp(viewModel: AppViewModel = viewModel()) {
-    val authSession by viewModel.authSession.collectAsStateWithLifecycle()
+    val authSessionLoaded by viewModel.authSessionLoaded.collectAsStateWithLifecycle()
     val authUiState by viewModel.authUiState.collectAsStateWithLifecycle()
     val serverConfig by viewModel.serverConfig.collectAsStateWithLifecycle()
     val activeBusiness by viewModel.activeBusiness.collectAsStateWithLifecycle()
+    val appearanceMode by viewModel.appearanceMode.collectAsStateWithLifecycle()
+
+    var splashMinDone by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(850)
+        splashMinDone = true
+    }
 
     var signupPreviewThemeKey by remember { mutableStateOf(AppThemeOption.OCEAN.key) }
-    val appliedThemeKey = if (authSession.isLoggedIn) activeBusiness.themeKey else signupPreviewThemeKey
+    val appliedThemeKey = if (authSessionLoaded?.isLoggedIn == true) activeBusiness.themeKey else signupPreviewThemeKey
 
-    HassanAgroTheme(themeKey = appliedThemeKey) {
-        if (!authSession.isLoggedIn) {
-            LoginScreen(
-                initialServerUrl = serverConfig.serverBaseUrl,
-                authState = authUiState,
-                selectedPreviewThemeKey = signupPreviewThemeKey,
-                onPreviewThemeChange = { signupPreviewThemeKey = it },
-                onLogin = viewModel::login,
-                onRegister = viewModel::register,
-                onClearError = viewModel::clearAuthError
-            )
-        } else {
-            AuthenticatedBusinessApp(viewModel = viewModel)
+    val rootStage = when {
+        authSessionLoaded == null || !splashMinDone -> AppRootStage.SPLASH
+        authSessionLoaded?.isLoggedIn == true -> AppRootStage.AUTHENTICATED
+        else -> AppRootStage.LOGIN
+    }
+
+    HassanAgroTheme(themeKey = appliedThemeKey, appearanceMode = appearanceMode) {
+        AnimatedContent(
+            targetState = rootStage,
+            transitionSpec = {
+                (fadeIn(animationSpec = tween(340, easing = FastOutSlowInEasing)) +
+                    scaleIn(initialScale = 0.96f, animationSpec = tween(340, easing = FastOutSlowInEasing)))
+                    .togetherWith(fadeOut(animationSpec = tween(240, easing = FastOutSlowInEasing)))
+            },
+            label = "root_stage_transition"
+        ) { stage ->
+            when (stage) {
+                AppRootStage.SPLASH -> {
+                    val statusText = when {
+                        authSessionLoaded == null -> "Checking saved session..."
+                        authSessionLoaded?.isLoggedIn == true -> "Opening ${activeBusiness.name}..."
+                        else -> "Preparing workspace..."
+                    }
+                    AppSplashScreen(statusLabel = statusText)
+                }
+                AppRootStage.LOGIN -> {
+                    LoginScreen(
+                        initialServerUrl = serverConfig.serverBaseUrl,
+                        authState = authUiState,
+                        selectedPreviewThemeKey = signupPreviewThemeKey,
+                        onPreviewThemeChange = { signupPreviewThemeKey = it },
+                        onLogin = viewModel::login,
+                        onRegister = viewModel::register,
+                        onClearError = viewModel::clearAuthError
+                    )
+                }
+                AppRootStage.AUTHENTICATED -> {
+                    AuthenticatedBusinessApp(viewModel = viewModel)
+                }
+            }
         }
     }
 }
@@ -168,6 +224,8 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
     val syncState by viewModel.syncUiState.collectAsStateWithLifecycle()
     val teamState by viewModel.teamState.collectAsStateWithLifecycle()
     val pendingSyncCount by viewModel.pendingSyncCount.collectAsStateWithLifecycle()
+    val appearanceMode by viewModel.appearanceMode.collectAsStateWithLifecycle()
+    val dashboardPeriod by viewModel.dashboardPeriod.collectAsStateWithLifecycle()
     val inventoryFilter by viewModel.inventoryFilter.collectAsStateWithLifecycle()
     val billingDraft by viewModel.billingDraft.collectAsStateWithLifecycle()
     val heldCarts by viewModel.heldCarts.collectAsStateWithLifecycle()
@@ -252,6 +310,18 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
         )
     }
 
+    val isDrawerTargetOpen = drawerState.targetValue == DrawerValue.Open
+    val contentScale by animateFloatAsState(
+        targetValue = if (isDrawerTargetOpen) 0.965f else 1f,
+        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+        label = "drawer_content_scale"
+    )
+    val contentCornerRadius by animateDpAsState(
+        targetValue = if (isDrawerTargetOpen) 22.dp else 0.dp,
+        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+        label = "drawer_content_corner"
+    )
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         gesturesEnabled = currentRoute != NavRoutes.SETTINGS,
@@ -260,6 +330,7 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
                 activeBusiness = activeBusiness,
                 businessCount = businesses.size,
                 authSession = authSession,
+                appearanceMode = appearanceMode,
                 serverConfig = serverConfig,
                 syncState = syncState,
                 pendingSyncCount = pendingSyncCount,
@@ -269,6 +340,7 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
                 canManageBusinesses = canManageBusinesses,
                 canManageTeam = canManageTeam,
                 canManageSettings = canManageSettings,
+                onAppearanceModeChange = viewModel::setAppearanceMode,
                 onNavigateRoute = { route ->
                     scope.launch { drawerState.close() }
                     navigateTopLevel(route)
@@ -304,7 +376,15 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
             )
         }
     ) {
-        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = contentScale
+                    scaleY = contentScale
+                }
+                .clip(RoundedCornerShape(contentCornerRadius))
+        ) {
             val useNavigationRail = maxWidth >= 600.dp
 
             Scaffold(
@@ -423,7 +503,35 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
                 Box(modifier = Modifier.weight(1f)) {
                     NavHost(
                         navController = navController,
-                        startDestination = startRoute
+                        startDestination = startRoute,
+                        enterTransition = {
+                            fadeIn(animationSpec = tween(260, easing = FastOutSlowInEasing)) +
+                                slideInHorizontally(
+                                    initialOffsetX = { fullWidth -> (fullWidth * 0.06f).toInt() },
+                                    animationSpec = tween(260, easing = FastOutSlowInEasing)
+                                )
+                        },
+                        exitTransition = {
+                            fadeOut(animationSpec = tween(210, easing = FastOutSlowInEasing)) +
+                                slideOutHorizontally(
+                                    targetOffsetX = { fullWidth -> -(fullWidth * 0.04f).toInt() },
+                                    animationSpec = tween(210, easing = FastOutSlowInEasing)
+                                )
+                        },
+                        popEnterTransition = {
+                            fadeIn(animationSpec = tween(260, easing = FastOutSlowInEasing)) +
+                                slideInHorizontally(
+                                    initialOffsetX = { fullWidth -> -(fullWidth * 0.06f).toInt() },
+                                    animationSpec = tween(260, easing = FastOutSlowInEasing)
+                                )
+                        },
+                        popExitTransition = {
+                            fadeOut(animationSpec = tween(210, easing = FastOutSlowInEasing)) +
+                                slideOutHorizontally(
+                                    targetOffsetX = { fullWidth -> (fullWidth * 0.06f).toInt() },
+                                    animationSpec = tween(210, easing = FastOutSlowInEasing)
+                                )
+                        }
                     ) {
                         composable(NavRoutes.DASHBOARD) {
                             DashboardScreen(
@@ -432,6 +540,8 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
                                 products = products,
                                 invoices = invoices,
                                 expenses = expenses,
+                                selectedPeriod = dashboardPeriod,
+                                onPeriodChange = viewModel::setDashboardPeriod,
                                 onQuickNewBill = { navigateTopLevel(NavRoutes.BILLING) },
                                 onQuickScanStock = {
                                     if (canInventory) activeScanTarget = ScanTarget.STOCK_IN
@@ -503,6 +613,8 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
                                 onAddProductToCart = viewModel::addProductToCart,
                                 onUpdateCartQty = viewModel::updateCartLineQuantity,
                                 onUpdateCartPrice = viewModel::updateCartLineUnitPrice,
+                                onAttachProofImage = viewModel::attachBillingProofImage,
+                                onRemoveProofImage = viewModel::clearBillingProofImage,
                                 onClearCart = viewModel::clearBillingDraft,
                                 onHoldCart = viewModel::holdCurrentCart,
                                 onResumeHeldCart = viewModel::resumeHeldCart,
@@ -524,6 +636,7 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
                                 expenses = expenses,
                                 autoOpenAdd = autoOpenAddExpense,
                                 onConsumeAutoOpenAdd = { autoOpenAddExpense = false },
+                                onSaveProofImage = { uri -> viewModel.saveProofImage("expense_proof", uri) },
                                 onSaveExpense = viewModel::saveExpense,
                                 onDeleteExpense = viewModel::deleteExpense
                             )
@@ -555,6 +668,7 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
                                 authSession = authSession,
                                 businesses = businesses,
                                 activeBusiness = activeBusiness,
+                                appearanceMode = appearanceMode,
                                 serverConfig = serverConfig,
                                 syncState = syncState,
                                 teamState = teamState,
@@ -562,6 +676,7 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
                                 canManageBusinesses = canManageBusinesses,
                                 canManageTeam = canManageTeam,
                                 canManageSettings = canManageSettings,
+                                onAppearanceModeChange = viewModel::setAppearanceMode,
                                 onSwitchBusiness = viewModel::switchBusiness,
                                 onSaveBusiness = viewModel::saveBusiness,
                                 onDeleteBusiness = viewModel::deleteBusiness,

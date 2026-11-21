@@ -22,8 +22,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Badge
+import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.Sync
@@ -31,12 +34,16 @@ import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.CloudSync
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -53,6 +60,7 @@ import com.example.R
 import com.example.data.local.AuthSession
 import com.example.data.local.BusinessEntity
 import com.example.data.local.ServerSyncConfig
+import com.example.data.local.ThemeAppearanceMode
 import com.example.ui.screens.SettingsTabKey
 import com.example.viewmodel.SyncUiState
 
@@ -63,11 +71,13 @@ data class DrawerDestinationItem(
     val unselectedIcon: ImageVector
 )
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppNavigationDrawerSheet(
     activeBusiness: BusinessEntity,
     businessCount: Int,
     authSession: AuthSession,
+    appearanceMode: ThemeAppearanceMode,
     serverConfig: ServerSyncConfig,
     syncState: SyncUiState,
     pendingSyncCount: Int,
@@ -77,6 +87,7 @@ fun AppNavigationDrawerSheet(
     canManageBusinesses: Boolean,
     canManageTeam: Boolean,
     canManageSettings: Boolean,
+    onAppearanceModeChange: (ThemeAppearanceMode) -> Unit,
     onNavigateRoute: (String) -> Unit,
     onOpenSettings: (SettingsTabKey) -> Unit,
     onOpenBusinessSwitcher: () -> Unit,
@@ -443,7 +454,47 @@ fun AppNavigationDrawerSheet(
                 )
             }
 
-            // Pinned Footer: Sign Out
+            // Quick Appearance Mode Toggle + Pinned Sign Out
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = "APPEARANCE",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    ThemeAppearanceMode.entries.forEachIndexed { idx, mode ->
+                        val icon = when (mode) {
+                            ThemeAppearanceMode.SYSTEM -> Icons.Default.BrightnessAuto
+                            ThemeAppearanceMode.LIGHT -> Icons.Default.LightMode
+                            ThemeAppearanceMode.DARK -> Icons.Default.DarkMode
+                        }
+                        SegmentedButton(
+                            selected = appearanceMode == mode,
+                            onClick = { onAppearanceModeChange(mode) },
+                            shape = SegmentedButtonDefaults.itemShape(idx, ThemeAppearanceMode.entries.size),
+                            icon = {
+                                Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp))
+                            },
+                            modifier = Modifier.testTag("drawer_appearance_${mode.name.lowercase()}")
+                        ) {
+                            Text(
+                                text = if (mode == ThemeAppearanceMode.SYSTEM) "Auto" else mode.label,
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
+                }
+            }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Box(
                 modifier = Modifier

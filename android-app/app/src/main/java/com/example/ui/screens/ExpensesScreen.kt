@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material3.Button
 import androidx.compose.material3.FloatingActionButton
@@ -44,11 +46,13 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -56,14 +60,19 @@ import com.example.R
 import com.example.data.local.BusinessEntity
 import com.example.data.local.ExpenseEntity
 import com.example.ui.components.AgriFilterChip
+import com.example.ui.components.AppConfirmDeleteDialog
 import com.example.ui.components.AppDatePickerDialog
 import com.example.ui.components.EmptyStateCard
 import com.example.ui.components.FormScreenDialog
 import com.example.ui.components.PerformedByPill
-import com.example.ui.theme.ExpiredCrimson
+import com.example.ui.components.ProofImagePickerCard
+import com.example.ui.components.ProofImageViewerDialog
+import com.example.ui.theme.LocalSemanticColors
 import com.example.ui.theme.MonoFigureLarge
 import com.example.ui.theme.MonoFigureMedium
 import com.example.util.Formatters
+import kotlinx.coroutines.launch
+import java.io.File
 import java.util.Calendar
 
 @Composable
@@ -72,11 +81,13 @@ fun ExpensesScreen(
     expenses: List<ExpenseEntity>,
     autoOpenAdd: Boolean,
     onConsumeAutoOpenAdd: () -> Unit,
+    onSaveProofImage: suspend (Uri) -> String?,
     onSaveExpense: (ExpenseEntity) -> Unit,
     onDeleteExpense: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val currency = activeBusiness.resolvedCurrency()
+    val semantic = LocalSemanticColors.current
     val customCategories = remember(activeBusiness.expenseCategoriesJson, activeBusiness.businessType) {
         activeBusiness.expenseCategories()
     }
@@ -87,6 +98,8 @@ fun ExpensesScreen(
     var selectedCategory by remember { mutableStateOf<String?>(null) }
     var showAddSheet by remember { mutableStateOf(false) }
     var editingExpense by remember { mutableStateOf<ExpenseEntity?>(null) }
+    var deleteTargetExpense by remember { mutableStateOf<ExpenseEntity?>(null) }
+    var previewProofPair by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     LaunchedEffect(autoOpenAdd) {
         if (autoOpenAdd) {
@@ -184,7 +197,7 @@ fun ExpensesScreen(
                         Text(
                             text = Formatters.formatPkr(monthlyTotal, currency),
                             style = MonoFigureLarge,
-                            color = ExpiredCrimson,
+                            color = semantic.negativeFg,
                             maxLines = 1
                         )
                     }
@@ -232,6 +245,7 @@ fun ExpensesScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(filteredExpenses, key = { it.id }) { expense ->
+                        val hasProof = !expense.proofImagePath.isNullOrBlank() && File(expense.proofImagePath).exists()
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -246,10 +260,11 @@ fun ExpensesScreen(
                                     .padding(14.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Text(
                                         text = expense.title,
                                         style = MaterialTheme.typography.titleMedium,
+                                        color = MaterialTheme.colorScheme.onSurface,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -287,25 +302,60 @@ fun ExpensesScreen(
                                             overflow = TextOverflow.Ellipsis
                                         )
                                     }
-                                    PerformedByPill(name = expense.performedByName)
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        PerformedByPill(name = expense.performedByName)
+                                        if (hasProof) {
+                                            Surface(
+                                                modifier = Modifier
+                                                    .clickable {
+                                                        previewProofPair = expense.title to expense.proofImagePath!!
+                                                    }
+                                                    .testTag("expense_view_proof_${expense.id}"),
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = MaterialTheme.colorScheme.primaryContainer
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Image,
+                                                        contentDescription = "View receipt proof",
+                                                        tint = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.size(12.dp)
+                                                    )
+                                                    Text(
+                                                        text = "Proof",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                        fontWeight = FontWeight.SemiBold
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                                 Spacer(Modifier.width(8.dp))
                                 Column(horizontalAlignment = Alignment.End) {
                                     Text(
                                         text = Formatters.formatPkr(expense.amount, currency),
                                         style = MonoFigureMedium,
-                                        color = ExpiredCrimson,
+                                        color = semantic.negativeFg,
                                         maxLines = 1,
                                         softWrap = false
                                     )
                                     IconButton(
-                                        onClick = { onDeleteExpense(expense.id) },
+                                        onClick = { deleteTargetExpense = expense },
                                         modifier = Modifier.size(34.dp)
                                     ) {
                                         Icon(
                                             Icons.Default.Delete,
                                             contentDescription = stringResource(R.string.cd_delete_item),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            tint = MaterialTheme.colorScheme.error,
                                             modifier = Modifier.size(18.dp)
                                         )
                                     }
@@ -334,6 +384,7 @@ fun ExpensesScreen(
         ExpenseEditorDialog(
             business = activeBusiness,
             existing = editingExpense,
+            onSaveProofImage = onSaveProofImage,
             onSave = {
                 onSaveExpense(it)
                 showAddSheet = false
@@ -345,16 +396,37 @@ fun ExpensesScreen(
             }
         )
     }
+
+    deleteTargetExpense?.let { target ->
+        AppConfirmDeleteDialog(
+            title = "Delete Expense?",
+            itemLabel = "${target.title} (${Formatters.formatPkr(target.amount, currency)})",
+            message = "This expense entry will be removed from ${activeBusiness.name}'s monthly ledger and profit/loss totals.",
+            confirmText = "Delete Expense",
+            onConfirm = { onDeleteExpense(target.id) },
+            onDismiss = { deleteTargetExpense = null }
+        )
+    }
+
+    previewProofPair?.let { (title, path) ->
+        ProofImageViewerDialog(
+            title = "Expense Proof • $title",
+            imagePath = path,
+            onDismiss = { previewProofPair = null }
+        )
+    }
 }
 
 @Composable
 private fun ExpenseEditorDialog(
     business: BusinessEntity,
     existing: ExpenseEntity?,
+    onSaveProofImage: suspend (Uri) -> String?,
     onSave: (ExpenseEntity) -> Unit,
     onDismiss: () -> Unit
 ) {
     val currency = business.resolvedCurrency()
+    val scope = rememberCoroutineScope()
     val categories = remember(business.expenseCategoriesJson, business.businessType) { business.expenseCategories() }
     val paymentMethods = remember(business.paymentMethodsJson, business.businessType) { business.paymentMethods() }
 
@@ -364,6 +436,7 @@ private fun ExpenseEditorDialog(
     var paymentMethod by remember { mutableStateOf(existing?.paymentMethod ?: paymentMethods.firstOrNull() ?: "Cash") }
     var payee by remember { mutableStateOf(existing?.payee ?: "") }
     var notes by remember { mutableStateOf(existing?.notes ?: "") }
+    var proofImagePath by remember { mutableStateOf(existing?.proofImagePath) }
     var dateMillis by remember { mutableLongStateOf(existing?.expenseDateMillis ?: System.currentTimeMillis()) }
     var showDatePicker by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
@@ -392,6 +465,7 @@ private fun ExpenseEditorDialog(
                         paymentMethod = paymentMethod,
                         payee = payee.trim(),
                         notes = notes.trim(),
+                        proofImagePath = proofImagePath,
                         expenseDateMillis = dateMillis
                     )
                     onSave(entity)
@@ -477,6 +551,20 @@ private fun ExpenseEditorDialog(
             onValueChange = { notes = it },
             label = { Text("Notes (optional)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
             modifier = Modifier.fillMaxWidth()
+        )
+
+        // Proof of Payment / Receipt Reference Image
+        ProofImagePickerCard(
+            label = "Receipt / Proof of Payment (optional)",
+            imagePath = proofImagePath,
+            onPickImageUri = { uri ->
+                scope.launch {
+                    val saved = onSaveProofImage(uri)
+                    if (saved != null) proofImagePath = saved
+                }
+            },
+            onRemoveImage = { proofImagePath = null },
+            testTagPrefix = "expense_proof"
         )
 
         if (errorMsg != null) {

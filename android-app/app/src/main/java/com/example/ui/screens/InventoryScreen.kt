@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -59,21 +60,21 @@ import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.local.BusinessEntity
 import com.example.data.local.ExpiryStatus
+import com.example.data.local.PaymentMethod
 import com.example.data.local.PricingTier
 import com.example.data.local.ProductEntity
 import com.example.data.local.calculateSuggestedTierPrices
 import com.example.ui.components.AgriFilterChip
+import com.example.ui.components.AppConfirmDeleteDialog
 import com.example.ui.components.AppDatePickerDialog
 import com.example.ui.components.CompactSearchBar
 import com.example.ui.components.EmptyStateCard
 import com.example.ui.components.ExpiryBadge
 import com.example.ui.components.FormScreenDialog
 import com.example.ui.components.PerformedByPill
-import com.example.ui.theme.ExpiredCrimson
+import com.example.ui.theme.LocalSemanticColors
 import com.example.ui.theme.MonoCodeSmall
 import com.example.ui.theme.MonoFigureMedium
-import com.example.ui.theme.SafeStockBg
-import com.example.ui.theme.SafeStockGreen
 import com.example.util.Formatters
 import com.example.viewmodel.InventoryFilter
 import java.util.concurrent.TimeUnit
@@ -88,8 +89,8 @@ fun InventoryScreen(
     pendingNewProductBarcode: String?,
     pendingRestockProduct: ProductEntity?,
     onClearScanPrompts: () -> Unit,
-    onSaveProduct: (ProductEntity) -> Unit,
-    onRestockProduct: (String, Int, String, Long) -> Unit,
+    onSaveProduct: (ProductEntity, Boolean, String) -> Unit,
+    onRestockProduct: (String, Int, String, Long, Double?, Boolean, String) -> Unit,
     onDeleteProduct: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -98,6 +99,7 @@ fun InventoryScreen(
     var editingProduct by remember { mutableStateOf<ProductEntity?>(null) }
     var showAddProductSheet by remember { mutableStateOf(false) }
     var quickRestockTarget by remember { mutableStateOf<ProductEntity?>(null) }
+    var deleteTargetProduct by remember { mutableStateOf<ProductEntity?>(null) }
 
     val customCategories = remember(activeBusiness.productCategoriesJson, activeBusiness.businessType) {
         activeBusiness.productCategories()
@@ -233,7 +235,7 @@ fun InventoryScreen(
                             product = product,
                             onEdit = { editingProduct = product },
                             onRestock = { quickRestockTarget = product },
-                            onDelete = { onDeleteProduct(product.id) }
+                            onDelete = { deleteTargetProduct = product }
                         )
                     }
                 }
@@ -258,8 +260,8 @@ fun InventoryScreen(
             business = activeBusiness,
             existing = editingProduct,
             prefilledBarcode = pendingNewProductBarcode,
-            onSave = { saved ->
-                onSaveProduct(saved)
+            onSave = { saved, recordStockPurchase, paymentMethod ->
+                onSaveProduct(saved, recordStockPurchase, paymentMethod)
                 showAddProductSheet = false
                 editingProduct = null
                 onClearScanPrompts()
@@ -277,8 +279,8 @@ fun InventoryScreen(
         QuickRestockDialog(
             business = activeBusiness,
             product = restockItem,
-            onConfirm = { qty, batch, expiry ->
-                onRestockProduct(restockItem.id, qty, batch, expiry)
+            onConfirm = { qty, batch, expiry, unitCost, recordExpense, payMethod ->
+                onRestockProduct(restockItem.id, qty, batch, expiry, unitCost, recordExpense, payMethod)
                 quickRestockTarget = null
                 onClearScanPrompts()
             },
@@ -286,6 +288,17 @@ fun InventoryScreen(
                 quickRestockTarget = null
                 onClearScanPrompts()
             }
+        )
+    }
+
+    deleteTargetProduct?.let { target ->
+        AppConfirmDeleteDialog(
+            title = "Delete Product?",
+            itemLabel = target.name,
+            message = "This will remove the product (${target.stockQty} units in stock) from ${activeBusiness.name}'s inventory. Past invoices will remain intact.",
+            confirmText = "Delete Product",
+            onConfirm = { onDeleteProduct(target.id) },
+            onDismiss = { deleteTargetProduct = null }
         )
     }
 }
@@ -377,10 +390,11 @@ private fun ProductStockCard(
                     color = if (isLowStock) MaterialTheme.colorScheme.errorContainer
                     else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
                 ) {
+                    val semantic = LocalSemanticColors.current
                     Text(
                         text = "Stock: ${product.stockQty}",
                         style = MonoFigureMedium,
-                        color = if (isLowStock) ExpiredCrimson else MaterialTheme.colorScheme.primary,
+                        color = if (isLowStock) semantic.negativeFg else MaterialTheme.colorScheme.primary,
                         maxLines = 1,
                         softWrap = false,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -477,16 +491,20 @@ private fun ProductEditorDialog(
     business: BusinessEntity,
     existing: ProductEntity?,
     prefilledBarcode: String?,
-    onSave: (ProductEntity) -> Unit,
+    onSave: (ProductEntity, Boolean, String) -> Unit,
     onDismiss: () -> Unit
 ) {
     val defaultExpiry = remember { System.currentTimeMillis() + TimeUnit.DAYS.toMillis(365) }
     val categories = remember(business.productCategoriesJson, business.businessType) {
         business.productCategories()
     }
+    val paymentMethods = remember(business.paymentMethodsJson, business.businessType) {
+        business.paymentMethods()
+    }
     val taxPresets = remember(business.taxPresetsJson) { business.taxPresets() }
     val pricingRules = remember(business.pricingRulesJson) { business.pricingRules() }
     val currency = business.resolvedCurrency()
+    val semantic = LocalSemanticColors.current
 
     var name by remember { mutableStateOf(existing?.name ?: "") }
     var brand by remember { mutableStateOf(existing?.brand ?: "") }
@@ -498,6 +516,8 @@ private fun ProductEditorDialog(
     var stockQty by remember { mutableStateOf(existing?.stockQty?.toString() ?: "0") }
     var lowStock by remember { mutableStateOf(existing?.lowStockThreshold?.toString() ?: "10") }
     var purchasePrice by remember { mutableStateOf(existing?.purchasePrice?.takeIf { it > 0 }?.toString() ?: "") }
+    var recordStockPurchaseExpense by remember(existing?.id) { mutableStateOf(existing == null) }
+    var purchasePaymentMethod by remember { mutableStateOf(paymentMethods.firstOrNull() ?: PaymentMethod.CASH.label) }
     var mrpPrice by remember { mutableStateOf(existing?.mrpPrice?.takeIf { it > 0 }?.toString() ?: "") }
     var distPrice by remember { mutableStateOf(existing?.distributorPrice?.takeIf { it > 0 }?.toString() ?: "") }
     var whlsPrice by remember { mutableStateOf(existing?.wholesalerPrice?.takeIf { it > 0 }?.toString() ?: "") }
@@ -611,7 +631,7 @@ private fun ProductEditorDialog(
                         wholesalerPrice = whls,
                         retailPrice = retail
                     )
-                    onSave(entity)
+                    onSave(entity, recordStockPurchaseExpense, purchasePaymentMethod)
                 },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -731,13 +751,88 @@ private fun ProductEditorDialog(
                 purchasePrice = it
                 applyAutoSuggestions(forceAll = false)
             },
-            label = { Text("Purchase / Cost Price ($currency)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            label = { Text("Purchase / Cost Price per Unit ($currency)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             singleLine = true,
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("product_purchase_price_input")
         )
+
+        // Live Stock Purchase Capital Summary & Auto-Log to Stock Purchase Expense
+        val enteredQty = stockQty.toIntOrNull() ?: 0
+        val addedQty = if (existing == null) enteredQty else (enteredQty - existing.stockQty).coerceAtLeast(0)
+        val unitPurchaseCost = purchasePrice.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
+        val totalAddedCost = addedQty * unitPurchaseCost
+        if (addedQty > 0 && unitPurchaseCost > 0.0) {
+            Surface(
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Total Stock Purchase Cost",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "$addedQty units × ${Formatters.formatPkr(unitPurchaseCost, currency)} • Adds to Stock Asset Value",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            text = Formatters.formatPkr(totalAddedCost, currency),
+                            style = MonoFigureMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { recordStockPurchaseExpense = !recordStockPurchaseExpense },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = recordStockPurchaseExpense,
+                            onCheckedChange = { recordStockPurchaseExpense = it },
+                            modifier = Modifier.testTag("record_stock_purchase_checkbox")
+                        )
+                        Text(
+                            text = "Log as 'Stock Purchase' ledger spend",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    if (recordStockPurchaseExpense) {
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            paymentMethods.forEach { method ->
+                                AgriFilterChip(
+                                    selected = purchasePaymentMethod == method,
+                                    onClick = { purchasePaymentMethod = method },
+                                    label = method
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Smart Tax & Owner Margin Calculator Card
         val liveSuggestion = computeLiveSuggestion()
@@ -867,7 +962,7 @@ private fun ProductEditorDialog(
                 if (liveSuggestion.landedCost > 0.0) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = SafeStockBg
+                        color = semantic.positiveBg
                     ) {
                         Column(
                             modifier = Modifier
@@ -882,20 +977,20 @@ private fun ProductEditorDialog(
                                 Text(
                                     text = "Landed Cost: ${Formatters.formatPkr(liveSuggestion.landedCost, currency)}",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = SafeStockGreen,
+                                    color = semantic.positiveFg,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
                                     text = "Base Floor: ${Formatters.formatPkr(liveSuggestion.baseFloorPrice, currency)}",
                                     style = MonoCodeSmall,
-                                    color = SafeStockGreen,
+                                    color = semantic.positiveFg,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
                             Text(
                                 text = "Settings Steps: ${business.tierLabel(PricingTier.DISTRIBUTOR)} +${Formatters.formatDecimal(pricingRules.distributorStep)}% • ${business.tierLabel(PricingTier.WHOLESALER)} +${Formatters.formatDecimal(pricingRules.wholesalerStep)}% • ${business.tierLabel(PricingTier.RETAIL)} +${Formatters.formatDecimal(pricingRules.retailStep)}% • ${business.tierLabel(PricingTier.MRP)} +${Formatters.formatDecimal(pricingRules.mrpStep)}%",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = SafeStockGreen.copy(alpha = 0.85f),
+                                color = semantic.positiveFg.copy(alpha = 0.85f),
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -1022,13 +1117,26 @@ private fun ProductEditorDialog(
 private fun QuickRestockDialog(
     business: BusinessEntity,
     product: ProductEntity,
-    onConfirm: (Int, String, Long) -> Unit,
+    onConfirm: (Int, String, Long, Double?, Boolean, String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val currency = business.resolvedCurrency()
+    val paymentMethods = remember(business.paymentMethodsJson, business.businessType) {
+        business.paymentMethods()
+    }
     var addQty by remember { mutableStateOf("10") }
+    var unitCostText by remember {
+        mutableStateOf(product.purchasePrice.takeIf { it > 0.0 }?.toString() ?: "")
+    }
+    var recordExpense by remember { mutableStateOf(true) }
+    var paymentMethod by remember { mutableStateOf(paymentMethods.firstOrNull() ?: PaymentMethod.CASH.label) }
     var batch by remember { mutableStateOf(product.batchNumber) }
     var expiryMillis by remember { mutableLongStateOf(product.expiryDateMillis) }
     var showDatePicker by remember { mutableStateOf(false) }
+
+    val parsedQty = addQty.toIntOrNull() ?: 0
+    val parsedUnitCost = unitCostText.toDoubleOrNull()?.coerceAtLeast(0.0) ?: product.purchasePrice
+    val totalRestockCost = parsedQty * parsedUnitCost
 
     FormScreenDialog(
         title = "Quick Stock-In",
@@ -1037,29 +1145,117 @@ private fun QuickRestockDialog(
         bottomBar = {
             Button(
                 onClick = {
-                    val qty = addQty.toIntOrNull() ?: 0
-                    if (qty > 0) onConfirm(qty, batch.trim(), expiryMillis)
+                    if (parsedQty > 0) {
+                        onConfirm(
+                            parsedQty,
+                            batch.trim(),
+                            expiryMillis,
+                            unitCostText.toDoubleOrNull()?.takeIf { it > 0.0 },
+                            recordExpense,
+                            paymentMethod
+                        )
+                    }
                 },
-                enabled = (addQty.toIntOrNull() ?: 0) > 0,
+                enabled = parsedQty > 0,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(50.dp)
                     .testTag("confirm_restock_button")
             ) {
-                Text("Add Stock", maxLines = 1, softWrap = false)
+                Text(
+                    text = if (totalRestockCost > 0.0) "Add Stock (${Formatters.formatCompactPkr(totalRestockCost, currency)})" else "Add Stock",
+                    maxLines = 1,
+                    softWrap = false
+                )
             }
         }
     ) {
-        OutlinedTextField(
-            value = addQty,
-            onValueChange = { addQty = it.filter { c -> c.isDigit() } },
-            label = { Text("Quantity to Add *", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("restock_qty_input")
-        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedTextField(
+                value = addQty,
+                onValueChange = { addQty = it.filter { c -> c.isDigit() } },
+                label = { Text("Qty to Add *", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("restock_qty_input")
+            )
+            OutlinedTextField(
+                value = unitCostText,
+                onValueChange = { unitCostText = it },
+                label = { Text("Unit Cost ($currency)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("restock_unit_cost_input")
+            )
+        }
+
+        if (totalRestockCost > 0.0) {
+            Surface(
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Total Purchase Cost ($parsedQty × ${Formatters.formatPkr(parsedUnitCost, currency)})",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = Formatters.formatPkr(totalRestockCost, currency),
+                            style = MonoFigureMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { recordExpense = !recordExpense },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = recordExpense,
+                            onCheckedChange = { recordExpense = it },
+                            modifier = Modifier.testTag("restock_record_expense_checkbox")
+                        )
+                        Text(
+                            text = "Record as 'Stock Purchase' ledger spend",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    if (recordExpense) {
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            paymentMethods.forEach { method ->
+                                AgriFilterChip(
+                                    selected = paymentMethod == method,
+                                    onClick = { paymentMethod = method },
+                                    label = method
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if (business.trackBatch) {
             OutlinedTextField(
                 value = batch,

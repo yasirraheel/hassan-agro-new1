@@ -15,6 +15,17 @@ import java.util.UUID
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "hassan_agro_prefs")
 
+enum class ThemeAppearanceMode(val key: String, val label: String) {
+    SYSTEM("SYSTEM", "System"),
+    LIGHT("LIGHT", "Light"),
+    DARK("DARK", "Dark");
+
+    companion object {
+        fun fromKey(key: String?): ThemeAppearanceMode =
+            entries.firstOrNull { it.key.equals(key?.trim(), ignoreCase = true) } ?: SYSTEM
+    }
+}
+
 data class ServerSyncConfig(
     val serverBaseUrl: String = PreferencesStore.DEFAULT_SERVER_URL,
     val apiToken: String = "",
@@ -72,6 +83,11 @@ class PreferencesStore(private val context: Context) {
         val AUTH_ROLE_NAME = stringPreferencesKey("auth_role_name")
         val AUTH_PERMISSIONS_JSON = stringPreferencesKey("auth_permissions_json")
         val AUTH_BUSINESS_IDS_JSON = stringPreferencesKey("auth_business_ids_json")
+        val APPEARANCE_MODE = stringPreferencesKey("appearance_mode")
+    }
+
+    val appearanceModeFlow: Flow<ThemeAppearanceMode> = context.dataStore.data.map { prefs ->
+        ThemeAppearanceMode.fromKey(prefs[Keys.APPEARANCE_MODE])
     }
 
     val activeBusinessIdFlow: Flow<String> = context.dataStore.data.map { prefs ->
@@ -117,6 +133,10 @@ class PreferencesStore(private val context: Context) {
 
     suspend fun setActiveBusinessId(businessId: String) {
         context.dataStore.edit { it[Keys.ACTIVE_BUSINESS_ID] = businessId }
+    }
+
+    suspend fun setAppearanceMode(mode: ThemeAppearanceMode) {
+        context.dataStore.edit { it[Keys.APPEARANCE_MODE] = mode.key }
     }
 
     suspend fun saveServerUrlOnly(baseUrl: String) {
