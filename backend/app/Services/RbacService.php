@@ -174,6 +174,9 @@ class RbacService
             if (!$user || !$user->is_active) {
                 return null;
             }
+            if (property_exists($user, 'is_email_verified') && $user->is_email_verified !== null && !$user->is_email_verified) {
+                return null;
+            }
             DB::table('app_user_tokens')->where('id', $tokenRow->id)->update([
                 'last_used_ms' => $this->nowMs(),
             ]);

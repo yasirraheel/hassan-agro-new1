@@ -67,6 +67,7 @@ data class AuthUiState(
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
     val otpRequired: Boolean = false,
+    val otpFromLogin: Boolean = false,
     val otpEmail: String = "",
     val otpBusinessName: String = "",
     val otpInfoMessage: String? = null
@@ -202,7 +203,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val themeKey: String,
         val currencySymbol: String
     )
+    private data class PendingLoginOtp(
+        val serverUrl: String,
+        val email: String,
+        val password: String,
+        val businessName: String
+    )
     private var pendingRegistration: PendingRegistration? = null
+    private var pendingLoginOtp: PendingLoginOtp? = null
 
     fun setAppearanceMode(mode: ThemeAppearanceMode) {
         viewModelScope.launch {
@@ -370,16 +378,42 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun login(serverUrl: String, email: String, password: String) {
         if (_authUiState.value.isLoading) return
         viewModelScope.launch {
-            _authUiState.update { it.copy(isLoading = true, errorMessage = null) }
-            val result = repository.login(serverUrl, email, password)
-            _authUiState.update {
-                it.copy(
-                    isLoading = false,
-                    errorMessage = if (result.success) null else result.message
+            _authUiState.update { it.copy(isLoading = true, errorMessage = null, otpInfoMessage = null) }
+            val result = repository.login(serverUrl, email, password, otpCode = null)
+            if (result.success && result.otpRequired) {
+                pendingRegistration = null
+                pendingLoginOtp = PendingLoginOtp(
+                    serverUrl = serverUrl,
+                    email = result.otpEmail.ifBlank { email.trim() },
+                    password = password,
+                    businessName = result.otpBusinessName
                 )
-            }
-            if (result.success) {
+                _authUiState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = null,
+                        otpRequired = true,
+                        otpFromLogin = true,
+                        otpEmail = result.otpEmail.ifBlank { email.trim() },
+                        otpBusinessName = result.otpBusinessName,
+                        otpInfoMessage = result.message
+                    )
+                }
                 emitMessage(result.message)
+            } else {
+                _authUiState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = if (result.success) null else result.message,
+                        otpRequired = false,
+                        otpFromLogin = false
+                    )
+                }
+                if (result.success) {
+                    pendingLoginOtp = null
+                    pendingRegistration = null
+                    emitMessage(result.message)
+                }
             }
         }
     }
@@ -405,6 +439,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             themeKey = themeKey,
             currencySymbol = currencySymbol
         )
+        pendingLoginOtp = null
         pendingRegistration = pending
         viewModelScope.launch {
             _authUiState.update { it.copy(isLoading = true, errorMessage = null, otpInfoMessage = null) }
@@ -425,8 +460,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         isLoading = false,
                         errorMessage = null,
                         otpRequired = true,
+                        otpFromLogin = false,
                         otpEmail = result.otpEmail.ifBlank { email.trim() },
-                        otpBusinessName = businessName.trim(),
+                        otpBusinessName = result.otpBusinessName.ifBlank { businessName.trim() },
                         otpInfoMessage = result.message
                     )
                 }
@@ -436,7 +472,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(
                         isLoading = false,
                         errorMessage = if (result.success) null else result.message,
-                        otpRequired = false
+                        otpRequired = false,
+                        otpFromLogin = false
                     )
                 }
                 if (result.success) {
@@ -448,7 +485,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun verifyRegistrationOtp(otpCode: String) {
-        val pending = pendingRegistration ?: return
+        val loginPending = pendingLoginOtp
+        val regPending = pendingRegistration
+        if (loginPending == null && regPending == null) return
         if (_authUiState.value.isLoading) return
         val cleanOtp = otpCode.trim()
         if (cleanOtp.length < 6) {
@@ -457,25 +496,37 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             _authUiState.update { it.copy(isLoading = true, errorMessage = null) }
-            val result = repository.register(
-                serverBaseUrl = pending.serverUrl,
-                name = pending.name,
-                email = pending.email,
-                password = pending.password,
-                businessName = pending.businessName,
-                businessType = pending.businessType,
-                themeKey = pending.themeKey,
-                currencySymbol = pending.currencySymbol,
-                otpCode = cleanOtp
-            )
+            val result = if (loginPending != null) {
+                repository.login(
+                    serverBaseUrl = loginPending.serverUrl,
+                    email = loginPending.email,
+                    password = loginPending.password,
+                    otpCode = cleanOtp
+                )
+            } else {
+                val pending = regPending!!
+                repository.register(
+                    serverBaseUrl = pending.serverUrl,
+                    name = pending.name,
+                    email = pending.email,
+                    password = pending.password,
+                    businessName = pending.businessName,
+                    businessType = pending.businessType,
+                    themeKey = pending.themeKey,
+                    currencySymbol = pending.currencySymbol,
+                    otpCode = cleanOtp
+                )
+            }
+            val fullySignedIn = result.success && !result.otpRequired
             _authUiState.update {
                 it.copy(
                     isLoading = false,
-                    errorMessage = if (result.success) null else result.message,
-                    otpRequired = !result.success
+                    errorMessage = if (fullySignedIn) null else result.message,
+                    otpRequired = !fullySignedIn
                 )
             }
-            if (result.success) {
+            if (fullySignedIn) {
+                pendingLoginOtp = null
                 pendingRegistration = null
                 emitMessage(result.message)
             }
@@ -483,38 +534,108 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun resendRegistrationOtp() {
-        val pending = pendingRegistration ?: return
+        val loginPending = pendingLoginOtp
+        val regPending = pendingRegistration
+        if (loginPending == null && regPending == null) return
         if (_authUiState.value.isLoading) return
         viewModelScope.launch {
             _authUiState.update { it.copy(isLoading = true, errorMessage = null) }
-            val result = repository.register(
-                serverBaseUrl = pending.serverUrl,
-                name = pending.name,
-                email = pending.email,
-                password = pending.password,
-                businessName = pending.businessName,
-                businessType = pending.businessType,
-                themeKey = pending.themeKey,
-                currencySymbol = pending.currencySymbol,
-                otpCode = null
-            )
-            _authUiState.update {
-                it.copy(
-                    isLoading = false,
-                    errorMessage = if (result.success) null else result.message,
-                    otpInfoMessage = if (result.success) result.message else it.otpInfoMessage
+            val result = if (loginPending != null) {
+                repository.login(
+                    serverBaseUrl = loginPending.serverUrl,
+                    email = loginPending.email,
+                    password = loginPending.password,
+                    otpCode = null
+                )
+            } else {
+                val pending = regPending!!
+                repository.register(
+                    serverBaseUrl = pending.serverUrl,
+                    name = pending.name,
+                    email = pending.email,
+                    password = pending.password,
+                    businessName = pending.businessName,
+                    businessType = pending.businessType,
+                    themeKey = pending.themeKey,
+                    currencySymbol = pending.currencySymbol,
+                    otpCode = null
                 )
             }
-            if (result.success) {
+            // If Admin manually verified the user's email in the meantime, sign them straight in!
+            if (result.success && !result.otpRequired) {
+                pendingLoginOtp = null
+                pendingRegistration = null
+                _authUiState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = null,
+                        otpRequired = false,
+                        otpFromLogin = false,
+                        otpInfoMessage = null
+                    )
+                }
                 emitMessage(result.message)
+            } else {
+                _authUiState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = if (result.success) null else result.message,
+                        otpInfoMessage = if (result.success) result.message else it.otpInfoMessage
+                    )
+                }
+                if (result.success) {
+                    emitMessage(result.message)
+                }
+            }
+        }
+    }
+
+    fun checkVerifiedAndSignIn() {
+        val serverUrl = pendingLoginOtp?.serverUrl ?: pendingRegistration?.serverUrl ?: return
+        val email = pendingLoginOtp?.email ?: pendingRegistration?.email ?: return
+        val password = pendingLoginOtp?.password ?: pendingRegistration?.password ?: return
+        if (_authUiState.value.isLoading) return
+        viewModelScope.launch {
+            _authUiState.update { it.copy(isLoading = true, errorMessage = null) }
+            val result = repository.login(serverUrl, email, password, otpCode = null)
+            if (result.success && !result.otpRequired) {
+                pendingLoginOtp = null
+                pendingRegistration = null
+                _authUiState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = null,
+                        otpRequired = false,
+                        otpFromLogin = false,
+                        otpInfoMessage = null
+                    )
+                }
+                emitMessage(result.message)
+            } else if (result.otpRequired) {
+                _authUiState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = null,
+                        otpInfoMessage = "Email is still pending verification. Enter your 6-digit code or ask the administrator to verify it."
+                    )
+                }
+            } else {
+                _authUiState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = result.message
+                    )
+                }
             }
         }
     }
 
     fun cancelRegistrationOtp() {
+        pendingLoginOtp = null
         _authUiState.update {
             it.copy(
                 otpRequired = false,
+                otpFromLogin = false,
                 errorMessage = null,
                 otpInfoMessage = null
             )

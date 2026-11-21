@@ -9,6 +9,62 @@
     <button type="button" class="btn btn-primary" onclick="openBusinessModal()">+ Add Business</button>
 </div>
 
+@if(isset($unverifiedBusinesses) && $unverifiedBusinesses->isNotEmpty())
+<div class="card" style="margin-bottom:18px; border-color:#F59E0B; background:rgba(245, 158, 11, 0.06);">
+    <div class="card-header" style="margin-bottom:10px;">
+        <div>
+            <h2 class="card-title" style="color:#B45309;">Pending Email Verification ({{ $unverifiedBusinesses->count() }})</h2>
+            <div style="font-size:12.5px; color:var(--muted); margin-top:2px;">
+                These businesses were registered from the app, but their owner has not completed OTP verification yet. You can verify their email manually below so they can sign in right away.
+            </div>
+        </div>
+    </div>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Business Name</th>
+                    <th>Owner</th>
+                    <th>Email Address</th>
+                    <th>Registered</th>
+                    <th style="text-align:right;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach($unverifiedBusinesses as $ub)
+                    <tr>
+                        <td>
+                            <strong>{{ $ub->name }}</strong>
+                            <span class="badge badge-amber" style="margin-left:6px;">Unverified</span>
+                        </td>
+                        <td>{{ $ub->owner_name ?? 'Owner' }}</td>
+                        <td><span class="badge badge-blue">{{ $ub->owner_email }}</span></td>
+                        <td style="font-size:12.5px; color:var(--muted);">
+                            {{ ($ub->created_at_ms ?? 0) > 0 ? \Carbon\Carbon::createFromTimestampMs($ub->created_at_ms)->format('d M Y, h:i A') : 'Recently' }}
+                        </td>
+                        <td style="text-align:right; white-space:nowrap;">
+                            <form method="POST" action="{{ route('admin.businesses.verify', $ub->id) }}" style="display:inline;">
+                                @csrf
+                                <button type="submit" class="btn btn-sm btn-primary">Verify Email</button>
+                            </form>
+                            <form method="POST" action="{{ route('admin.businesses.delete', $ub->id) }}" style="display:inline;"
+                                  data-confirm-title="Remove Unverified Business"
+                                  data-confirm-item="{{ $ub->name }} ({{ $ub->owner_email }})"
+                                  data-confirm-message="This unverified business and owner account will be removed."
+                                  data-confirm-btn="Remove">
+                                @csrf
+                                @method('DELETE')
+                                <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                @endforeach
+            </tbody>
+        </table>
+    </div>
+</div>
+@endif
+
 <div class="card">
     <div class="table-wrap">
         <table>
@@ -52,7 +108,14 @@
                         </td>
                         <td>
                             @if($b->owner_email)
-                                <span class="badge badge-blue">{{ $b->owner_email }}</span>
+                                <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-start;">
+                                    <span class="badge badge-blue">{{ $b->owner_email }}</span>
+                                    @if(!($b->owner_is_verified ?? true))
+                                        <span class="badge badge-amber">Email Unverified</span>
+                                    @else
+                                        <span class="badge badge-green">Verified</span>
+                                    @endif
+                                </div>
                             @else
                                 <span class="badge badge-amber">Not configured</span>
                             @endif
@@ -70,6 +133,12 @@
                         <td class="num">{{ $b->currency_symbol ?? 'Rs.' }} {{ number_format((float)($invStat->rev ?? 0), 0) }}</td>
                         <td class="num">{{ $b->currency_symbol ?? 'Rs.' }} {{ number_format((float)($expenseSums[$b->id] ?? 0), 0) }}</td>
                         <td style="text-align:right; white-space:nowrap;">
+                            @if($b->owner_email && !($b->owner_is_verified ?? true))
+                                <form method="POST" action="{{ route('admin.businesses.verify', $b->id) }}" style="display:inline;">
+                                    @csrf
+                                    <button type="submit" class="btn btn-sm btn-primary">Verify Email</button>
+                                </form>
+                            @endif
                             <button type="button" class="btn btn-sm" onclick='openBusinessModal(@json($bObj))'>Customize / Edit</button>
                             <form method="POST" action="{{ route('admin.businesses.delete', $b->id) }}" style="display:inline;"
                                   data-confirm-title="Remove Business"
@@ -185,7 +254,7 @@
                     </label>
                 </div>
                 <div class="field form-full">
-                    <label>Product Categories (comma-separated — add, edit, or delete freely)</label>
+                    <label>Product Categories (comma-separated, add, edit, or delete freely)</label>
                     <textarea name="product_categories_csv" id="biz_prod_cats" rows="2"></textarea>
                 </div>
                 <div class="field form-full">

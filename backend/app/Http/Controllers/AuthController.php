@@ -21,9 +21,11 @@ class AuthController extends Controller
     public function login(Request $request): JsonResponse
     {
         $this->rbac->ensureSeeded();
+        $this->smtpOtp->ensureTablesExist();
 
         $email = strtolower(trim((string) $request->input('email', '')));
         $password = (string) $request->input('password', '');
+        $otpCode = trim((string) $request->input('otpCode', ''));
         $deviceId = (string) ($request->input('deviceId', '') ?: $request->header('X-Device-Id', ''));
 
         if ($email === '' || $password === '') {
@@ -63,6 +65,51 @@ class AuthController extends Controller
             ], 403);
         }
 
+        // If user registered a business earlier and did not verify their email yet,
+        // guide them straight to the OTP verification process instead of failing login.
+        if (!$this->smtpOtp->isUserEmailVerified($user)) {
+            $biz = $this->findPrimaryBusinessForUser($user);
+            $bizName = (string) ($biz->name ?? $user->name);
+            $bizTheme = (string) ($biz->theme_key ?? 'OCEAN');
+
+            if ($otpCode === '') {
+                try {
+                    $sent = $this->smtpOtp->sendRegistrationOtp($email, (string) $user->name, $bizName, $bizTheme);
+                    return response()->json([
+                        'success' => true,
+                        'otpRequired' => true,
+                        'email' => $sent['email'],
+                        'businessName' => $bizName,
+                        'expiresInSeconds' => $sent['expiresInSeconds'],
+                        'message' => "Your account email is not verified yet. A new 6-digit verification code has been sent to {$sent['email']}.",
+                    ], 200);
+                } catch (\Throwable $e) {
+                    return response()->json([
+                        'success' => true,
+                        'otpRequired' => true,
+                        'email' => $email,
+                        'businessName' => $bizName,
+                        'expiresInSeconds' => 600,
+                        'message' => 'Your account email is not verified yet. Enter your 6-digit verification code, tap Resend Code, or ask the administrator to verify your account.',
+                    ], 200);
+                }
+            }
+
+            $verification = $this->smtpOtp->verifyAndConsumeOtp($email, $otpCode);
+            if (!$verification['ok']) {
+                return response()->json([
+                    'success' => false,
+                    'otpRequired' => true,
+                    'email' => $email,
+                    'businessName' => $bizName,
+                    'message' => $verification['message'],
+                ], 422);
+            }
+
+            $this->smtpOtp->markUserEmailVerified((string) $user->id, $email);
+            $user = DB::table('app_users')->where('id', $user->id)->first();
+        }
+
         $token = $this->rbac->issueToken((string) $user->id, $deviceId);
 
         return response()->json([
@@ -74,13 +121,42 @@ class AuthController extends Controller
         ]);
     }
 
+    private function findPrimaryBusinessForUser(object $user): ?object
+    {
+        $owned = DB::table('businesses')
+            ->where('owner_user_id', $user->id)
+            ->where('is_deleted', false)
+            ->orderBy('created_at_ms')
+            ->first();
+        if ($owned) {
+            return $owned;
+        }
+
+        $ids = json_decode((string) ($user->business_ids_json ?? '[]'), true) ?: [];
+        foreach ($ids as $id) {
+            if ($id !== '*') {
+                $biz = DB::table('businesses')
+                    ->where('id', (string) $id)
+                    ->where('is_deleted', false)
+                    ->first();
+                if ($biz) {
+                    return $biz;
+                }
+            }
+        }
+        return null;
+    }
+
     /**
      * Self-signup: creates a new Business Owner user + their fully customizable Business
      * scoped strictly to their own business!
+     * When Email OTP is ON, the business & user are saved as unverified immediately so they
+     * appear in Admin Panel for optional manual verification, and login/verification stays seamless.
      */
     public function register(Request $request): JsonResponse
     {
         $this->rbac->ensureSeeded();
+        $this->smtpOtp->ensureTablesExist();
 
         $name = trim((string) $request->input('name', ''));
         $email = strtolower(trim((string) $request->input('email', '')));
@@ -90,6 +166,7 @@ class AuthController extends Controller
         $themeKey = strtoupper(trim((string) $request->input('themeKey', '')));
         $currencySymbol = trim((string) $request->input('currencySymbol', 'Rs.')) ?: 'Rs.';
         $deviceId = (string) ($request->input('deviceId', '') ?: $request->header('X-Device-Id', ''));
+        $otpCode = trim((string) $request->input('otpCode', ''));
 
         if ($name === '' || $email === '' || strlen($password) < 6 || $businessName === '') {
             return response()->json([
@@ -105,7 +182,8 @@ class AuthController extends Controller
             ], 422);
         }
 
-        if (DB::table('app_users')->where('email', $email)->exists()) {
+        $existingUser = DB::table('app_users')->where('email', $email)->first();
+        if ($existingUser && $this->smtpOtp->isUserEmailVerified($existingUser)) {
             return response()->json([
                 'success' => false,
                 'message' => 'An account with this email already exists. Please sign in.',
@@ -116,42 +194,7 @@ class AuthController extends Controller
         $preset = $presets[$businessType] ?? $presets['GENERAL'];
         $themes = config('sync.themes', []);
         $resolvedTheme = array_key_exists($themeKey, $themes) ? $themeKey : ($preset['default_theme'] ?? 'OCEAN');
-
-        // Email OTP verification gate (OFF by default; enforced only when Admin enables it)
-        if ($this->smtpOtp->isOtpEnabled()) {
-            $otpCode = trim((string) $request->input('otpCode', ''));
-            if ($otpCode === '') {
-                try {
-                    $sent = $this->smtpOtp->sendRegistrationOtp($email, $name, $businessName, $resolvedTheme);
-                    return response()->json([
-                        'success' => true,
-                        'otpRequired' => true,
-                        'email' => $sent['email'],
-                        'expiresInSeconds' => $sent['expiresInSeconds'],
-                        'message' => "A 6-digit verification code has been sent to {$sent['email']}.",
-                    ], 200);
-                } catch (\Throwable $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Could not send verification email: ' . $e->getMessage(),
-                    ], 500);
-                }
-            }
-
-            $verification = $this->smtpOtp->verifyAndConsumeOtp($email, $otpCode);
-            if (!$verification['ok']) {
-                return response()->json([
-                    'success' => false,
-                    'otpRequired' => true,
-                    'email' => $email,
-                    'message' => $verification['message'],
-                ], 422);
-            }
-        }
-
         $now = $this->rbac->nowMs();
-        $businessId = (string) Str::uuid();
-        $userId = (string) Str::uuid();
 
         // Ensure "Business Owner" role exists (full control of their own business, without global Super Admin access)
         $ownerRoleId = 'role-business-owner';
@@ -163,7 +206,7 @@ class AuthController extends Controller
                 'permissions_json' => json_encode([
                     'view_dashboard', 'manage_inventory', 'use_pos', 'collect_credit',
                     'return_sales', 'manage_expenses', 'view_reports', 'export_data',
-                    'manage_businesses', 'manage_settings',
+                    'manage_businesses', 'manage_settings', 'manage_team',
                 ]),
                 'is_system' => false,
                 'created_at_ms' => $now,
@@ -174,12 +217,34 @@ class AuthController extends Controller
         $prefix = strtoupper(preg_replace('/[^A-Za-z]/', '', $businessName));
         $prefix = substr($prefix !== '' ? $prefix : 'BM', 0, 3);
 
+        $existingBusiness = $existingUser ? $this->findPrimaryBusinessForUser($existingUser) : null;
+        $userId = $existingUser ? (string) $existingUser->id : (string) Str::uuid();
+        $businessId = $existingBusiness ? (string) $existingBusiness->id : (string) Str::uuid();
+
+        $otpEnabled = $this->smtpOtp->isOtpEnabled();
+
+        // When OTP is enabled and user submitted a code, validate the code before marking verified
+        if ($otpEnabled && $otpCode !== '') {
+            $verification = $this->smtpOtp->verifyAndConsumeOtp($email, $otpCode);
+            if (!$verification['ok']) {
+                return response()->json([
+                    'success' => false,
+                    'otpRequired' => true,
+                    'email' => $email,
+                    'businessName' => $businessName,
+                    'message' => $verification['message'],
+                ], 422);
+            }
+        }
+
+        $shouldMarkVerified = !$otpEnabled || $otpCode !== '';
+
         DB::transaction(function () use (
+            $existingBusiness, $existingUser,
             $businessId, $businessName, $businessType, $resolvedTheme, $currencySymbol,
-            $preset, $prefix, $userId, $name, $email, $password, $ownerRoleId, $now
+            $preset, $prefix, $userId, $name, $email, $password, $ownerRoleId, $now, $shouldMarkVerified
         ) {
-            DB::table('businesses')->insert([
-                'id' => $businessId,
+            $bizData = [
                 'owner_user_id' => $userId,
                 'name' => $businessName,
                 'tagline' => (string) ($preset['tagline'] ?? 'Business Management'),
@@ -201,25 +266,66 @@ class AuthController extends Controller
                 'pricing_tier_labels_json' => json_encode($preset['pricing_tier_labels'] ?? ['MRP' => 'MRP', 'DISTRIBUTOR' => 'Distributor', 'WHOLESALER' => 'Wholesaler', 'RETAIL' => 'Retail']),
                 'default_tax_rate' => 0.0,
                 'invoice_footer' => 'Thank you for your business!',
-                'created_at_ms' => $now,
                 'updated_at_ms' => $now,
                 'server_modified_at_ms' => $now,
                 'is_deleted' => false,
-            ]);
+            ];
 
-            DB::table('app_users')->insert([
-                'id' => $userId,
+            if ($existingBusiness) {
+                DB::table('businesses')->where('id', $businessId)->update($bizData);
+            } else {
+                DB::table('businesses')->insert(array_merge($bizData, [
+                    'id' => $businessId,
+                    'created_at_ms' => $now,
+                ]));
+            }
+
+            $userData = [
                 'name' => $name,
                 'email' => $email,
                 'password_hash' => Hash::make($password),
                 'role_id' => $ownerRoleId,
                 'business_ids_json' => json_encode([$businessId]),
                 'is_active' => true,
-                'last_login_ms' => $now,
-                'created_at_ms' => $now,
+                'is_email_verified' => $shouldMarkVerified,
+                'email_verified_at_ms' => $shouldMarkVerified ? $now : null,
                 'updated_at_ms' => $now,
-            ]);
+            ];
+
+            if ($existingUser) {
+                DB::table('app_users')->where('id', $userId)->update($userData);
+            } else {
+                DB::table('app_users')->insert(array_merge($userData, [
+                    'id' => $userId,
+                    'last_login_ms' => $shouldMarkVerified ? $now : 0,
+                    'created_at_ms' => $now,
+                ]));
+            }
         });
+
+        // If OTP is required and not submitted yet, send OTP email while keeping the unverified business saved
+        if ($otpEnabled && $otpCode === '') {
+            try {
+                $sent = $this->smtpOtp->sendRegistrationOtp($email, $name, $businessName, $resolvedTheme);
+                return response()->json([
+                    'success' => true,
+                    'otpRequired' => true,
+                    'email' => $sent['email'],
+                    'businessName' => $businessName,
+                    'expiresInSeconds' => $sent['expiresInSeconds'],
+                    'message' => "A 6-digit verification code has been sent to {$sent['email']}.",
+                ], 200);
+            } catch (\Throwable $e) {
+                return response()->json([
+                    'success' => true,
+                    'otpRequired' => true,
+                    'email' => $email,
+                    'businessName' => $businessName,
+                    'expiresInSeconds' => 600,
+                    'message' => 'Your business was saved as pending verification, but we could not send the OTP email (' . $e->getMessage() . '). You can tap Resend Code or ask the administrator to verify your email.',
+                ], 200);
+            }
+        }
 
         $user = DB::table('app_users')->where('id', $userId)->first();
         $token = $this->rbac->issueToken($userId, $deviceId);

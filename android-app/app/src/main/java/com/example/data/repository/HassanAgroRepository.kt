@@ -51,7 +51,8 @@ data class AuthActionResult(
     val success: Boolean,
     val message: String,
     val otpRequired: Boolean = false,
-    val otpEmail: String = ""
+    val otpEmail: String = "",
+    val otpBusinessName: String = ""
 )
 
 class HassanAgroRepository(
@@ -149,7 +150,12 @@ class HassanAgroRepository(
         }
     }
 
-    suspend fun login(serverBaseUrl: String, email: String, password: String): AuthActionResult =
+    suspend fun login(
+        serverBaseUrl: String,
+        email: String,
+        password: String,
+        otpCode: String? = null
+    ): AuthActionResult =
         withContext(Dispatchers.IO) {
             val cleanUrl = serverBaseUrl.trim().ifBlank { PreferencesStore.DEFAULT_SERVER_URL }
             if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
@@ -159,8 +165,24 @@ class HassanAgroRepository(
                 prefs.saveServerUrlOnly(cleanUrl)
                 val deviceId = prefs.ensureDeviceId()
                 val api = CustomServerClientFactory.createApi(cleanUrl, "", deviceId)
-                val resp = api.login(LoginRequest(email.trim(), password, deviceId))
+                val resp = api.login(
+                    LoginRequest(
+                        email = email.trim(),
+                        password = password,
+                        deviceId = deviceId,
+                        otpCode = otpCode?.trim()?.ifBlank { null }
+                    )
+                )
                 val body = resp.body()
+                if (resp.isSuccessful && body != null && body.otpRequired) {
+                    return@withContext AuthActionResult(
+                        success = true,
+                        message = body.message ?: "Your account is not verified yet. Enter the verification code sent to ${email.trim()}.",
+                        otpRequired = true,
+                        otpEmail = body.email ?: email.trim(),
+                        otpBusinessName = body.businessName.orEmpty()
+                    )
+                }
                 if (!resp.isSuccessful || body == null || !body.success || body.token.isNullOrBlank() || body.user == null) {
                     val err = body?.message ?: extractErrorMessage(resp.errorBody()?.string(), "Invalid email or password")
                     return@withContext AuthActionResult(false, err)
@@ -235,7 +257,8 @@ class HassanAgroRepository(
                     success = true,
                     message = body.message ?: "Verification code sent to ${email.trim()}",
                     otpRequired = true,
-                    otpEmail = body.email ?: email.trim()
+                    otpEmail = body.email ?: email.trim(),
+                    otpBusinessName = body.businessName ?: businessName.trim()
                 )
             }
             if (!resp.isSuccessful || body == null || !body.success || body.token.isNullOrBlank() || body.user == null) {

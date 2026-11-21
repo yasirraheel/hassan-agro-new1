@@ -22,6 +22,18 @@
     </div>
 </div>
 
+@if(($unverifiedBusinessCount ?? 0) > 0)
+<div class="card" style="margin-bottom:16px; border-color:#F59E0B; background:rgba(245, 158, 11, 0.08); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+    <div>
+        <strong style="color:#B45309;">{{ $unverifiedBusinessCount }} Unverified {{ $unverifiedBusinessCount === 1 ? 'Business' : 'Businesses' }} Waiting for Email Verification</strong>
+        <div style="font-size:13px; color:var(--muted); margin-top:2px;">
+            Review newly registered businesses that have not completed OTP verification yet, and verify them manually if needed.
+        </div>
+    </div>
+    <a href="{{ route('admin.businesses') }}" class="btn btn-sm btn-primary">Review &amp; Verify</a>
+</div>
+@endif
+
 {{-- Complete Profit & Loss Summary Panel --}}
 <div class="pl-hero">
     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap;">

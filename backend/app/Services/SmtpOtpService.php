@@ -54,6 +54,53 @@ class SmtpOtpService
                 $table->bigInteger('created_at_ms')->default(0);
             });
         }
+
+        if (Schema::hasTable('app_users')) {
+            $missingFlag = !Schema::hasColumn('app_users', 'is_email_verified');
+            $missingTime = !Schema::hasColumn('app_users', 'email_verified_at_ms');
+            if ($missingFlag || $missingTime) {
+                Schema::table('app_users', function (Blueprint $table) use ($missingFlag, $missingTime) {
+                    if ($missingFlag) {
+                        $table->boolean('is_email_verified')->default(true)->after('is_active');
+                    }
+                    if ($missingTime) {
+                        $table->bigInteger('email_verified_at_ms')->nullable()->after('is_email_verified');
+                    }
+                });
+            }
+        }
+    }
+
+    public function isUserEmailVerified(?object $user): bool
+    {
+        if (!$user) {
+            return true;
+        }
+        if (!property_exists($user, 'is_email_verified') || $user->is_email_verified === null) {
+            return true;
+        }
+        return (bool) $user->is_email_verified;
+    }
+
+    public function markUserEmailVerified(string $userId, string $email = ''): void
+    {
+        $this->ensureTablesExist();
+        $now = $this->nowMs();
+
+        DB::table('app_users')->where('id', $userId)->update([
+            'is_email_verified' => true,
+            'email_verified_at_ms' => $now,
+            'is_active' => true,
+            'updated_at_ms' => $now,
+        ]);
+
+        $normalizedEmail = strtolower(trim($email));
+        if ($normalizedEmail !== '') {
+            DB::table('email_otps')
+                ->where('email', $normalizedEmail)
+                ->whereNull('consumed_at_ms')
+                ->update(['consumed_at_ms' => $now]);
+        }
     }
 
     public function getSettings(): array

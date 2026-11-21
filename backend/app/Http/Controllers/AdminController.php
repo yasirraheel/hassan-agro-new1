@@ -135,7 +135,10 @@ class AdminController extends Controller
     public function dashboard(Request $request): View
     {
         $this->rbac->ensureSeeded();
+        $this->smtpOtp->ensureTablesExist();
         $businesses = $this->activeBusinesses();
+        $this->attachOwnerDetails($businesses);
+        $unverifiedBusinessCount = $businesses->filter(fn ($b) => !empty($b->owner_id) && !$b->owner_is_verified)->count();
         $bizMap = $businesses->keyBy('id');
         $selectedBizId = $this->selectedBusinessId($request);
         $activeTheme = $this->activeTheme($request, $businesses);
@@ -189,7 +192,7 @@ class AdminController extends Controller
 
         return view('admin.dashboard', compact(
             'businesses', 'bizMap', 'selectedBizId', 'activeTheme',
-            'selectedPeriod', 'periodLabels', 'pl',
+            'selectedPeriod', 'periodLabels', 'pl', 'unverifiedBusinessCount',
             'totalRevenue', 'totalCollected', 'totalCreditDue', 'invoiceCount',
             'totalExpenses', 'netProfit', 'totalProducts', 'totalUnits',
             'lowStockCount', 'expiredCount', 'expiringSoonCount', 'activeStaffCount',
@@ -202,8 +205,10 @@ class AdminController extends Controller
     public function businesses(Request $request): View
     {
         $this->rbac->ensureSeeded();
+        $this->smtpOtp->ensureTablesExist();
         $businesses = $this->activeBusinesses();
         $this->attachOwnerDetails($businesses);
+        $unverifiedBusinesses = $businesses->filter(fn ($b) => !empty($b->owner_id) && !$b->owner_is_verified)->values();
         $selectedBizId = $this->selectedBusinessId($request);
         $activeTheme = $this->activeTheme($request, $businesses);
         $themes = config('sync.themes', []);
@@ -218,7 +223,7 @@ class AdminController extends Controller
             ->selectRaw('business_id, COALESCE(SUM(amount), 0) as total')->groupBy('business_id')->pluck('total', 'business_id');
 
         return view('admin.businesses', compact(
-            'businesses', 'selectedBizId', 'activeTheme', 'themes', 'presets',
+            'businesses', 'unverifiedBusinesses', 'selectedBizId', 'activeTheme', 'themes', 'presets',
             'productCounts', 'invoiceCounts', 'expenseSums'
         ));
     }
@@ -276,8 +281,10 @@ class AdminController extends Controller
     {
         foreach ($businesses as $business) {
             $owner = $this->findBusinessOwner($business);
+            $business->owner_id = $owner?->id;
             $business->owner_email = $owner?->email;
             $business->owner_name = $owner?->name;
+            $business->owner_is_verified = $owner ? $this->smtpOtp->isUserEmailVerified($owner) : true;
         }
     }
 
@@ -544,11 +551,36 @@ class AdminController extends Controller
         return redirect()->route('admin.businesses')->with('success', 'Business profile, theme & pricing margins updated and synced.');
     }
 
+    public function verifyBusinessEmail(string $id): RedirectResponse
+    {
+        $this->smtpOtp->ensureTablesExist();
+        $business = DB::table('businesses')->where('id', $id)->where('is_deleted', false)->first();
+        if (!$business) {
+            return redirect()->route('admin.businesses')->with('error', 'Business not found.');
+        }
+
+        $owner = $this->findBusinessOwner($business);
+        if (!$owner) {
+            return redirect()->route('admin.businesses')->with('error', 'No owner account is linked to this business.');
+        }
+
+        $this->smtpOtp->markUserEmailVerified((string) $owner->id, (string) $owner->email);
+
+        return redirect()->route('admin.businesses')->with(
+            'success',
+            "Email verified manually for {$business->name} ({$owner->email}). The owner can now sign in from the app."
+        );
+    }
+
     public function deleteBusiness(string $id): RedirectResponse
     {
         if (DB::table('businesses')->where('is_deleted', false)->count() <= 1) {
             return redirect()->route('admin.businesses')->with('error', 'Cannot delete the only remaining business.');
         }
+
+        $this->smtpOtp->ensureTablesExist();
+        $business = DB::table('businesses')->where('id', $id)->first();
+        $owner = $business ? $this->findBusinessOwner($business) : null;
 
         $now = $this->rbac->nowMs();
         DB::table('businesses')->where('id', $id)->update([
@@ -556,6 +588,17 @@ class AdminController extends Controller
             'updated_at_ms' => $now,
             'server_modified_at_ms' => $now,
         ]);
+
+        // If removing an unverified business whose owner only belongs to this business,
+        // also clean up the unverified user so the email address is freed up.
+        if ($owner && !$this->smtpOtp->isUserEmailVerified($owner) && (string) $owner->id !== 'user-super-admin') {
+            $bizIds = json_decode((string) ($owner->business_ids_json ?? '[]'), true) ?: [];
+            if (count($bizIds) <= 1) {
+                DB::table('app_user_tokens')->where('user_id', $owner->id)->delete();
+                DB::table('email_otps')->where('email', strtolower((string) $owner->email))->delete();
+                DB::table('app_users')->where('id', $owner->id)->delete();
+            }
+        }
 
         return redirect()->route('admin.businesses')->with('success', 'Business removed and synced.');
     }
@@ -1315,6 +1358,7 @@ class AdminController extends Controller
     public function users(Request $request): View
     {
         $this->rbac->ensureSeeded();
+        $this->smtpOtp->ensureTablesExist();
         $businesses = $this->activeBusinesses();
         $bizMap = $businesses->keyBy('id');
         $selectedBizId = $this->selectedBusinessId($request);
@@ -1353,6 +1397,7 @@ class AdminController extends Controller
             $u->is_owner = !empty($u->owned_business_ids)
                 || $u->role_id === 'role-business-owner'
                 || in_array('manage_team', $rolePerms, true);
+            $u->is_email_verified = $this->smtpOtp->isUserEmailVerified($u);
             $u->business_names = in_array('*', $u->business_ids, true)
                 ? ['All Businesses']
                 : array_values(array_map(fn ($id) => $bizMap[$id]->name ?? $id, $u->business_ids));
@@ -1375,6 +1420,22 @@ class AdminController extends Controller
         return view('admin.users', compact(
             'businesses', 'bizMap', 'selectedBizId', 'activeTheme', 'roles', 'users'
         ));
+    }
+
+    public function verifyUserEmail(string $id): RedirectResponse
+    {
+        $this->smtpOtp->ensureTablesExist();
+        $user = DB::table('app_users')->where('id', $id)->first();
+        if (!$user) {
+            return redirect()->route('admin.users')->with('error', 'User account not found.');
+        }
+
+        $this->smtpOtp->markUserEmailVerified((string) $user->id, (string) $user->email);
+
+        return redirect()->route('admin.users')->with(
+            'success',
+            "Email verified manually for {$user->name} ({$user->email}). They can now sign in."
+        );
     }
 
     public function storeUser(Request $request): RedirectResponse

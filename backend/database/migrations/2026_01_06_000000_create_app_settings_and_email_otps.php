@@ -28,10 +28,31 @@ return new class extends Migration
                 $table->bigInteger('created_at_ms')->default(0);
             });
         }
+
+        if (Schema::hasTable('app_users')) {
+            Schema::table('app_users', function (Blueprint $table) {
+                if (!Schema::hasColumn('app_users', 'is_email_verified')) {
+                    $table->boolean('is_email_verified')->default(true)->after('is_active');
+                }
+                if (!Schema::hasColumn('app_users', 'email_verified_at_ms')) {
+                    $table->bigInteger('email_verified_at_ms')->nullable()->after('is_email_verified');
+                }
+            });
+        }
     }
 
     public function down(): void
     {
+        if (Schema::hasTable('app_users')) {
+            Schema::table('app_users', function (Blueprint $table) {
+                if (Schema::hasColumn('app_users', 'email_verified_at_ms')) {
+                    $table->dropColumn('email_verified_at_ms');
+                }
+                if (Schema::hasColumn('app_users', 'is_email_verified')) {
+                    $table->dropColumn('is_email_verified');
+                }
+            });
+        }
         Schema::dropIfExists('email_otps');
         Schema::dropIfExists('app_settings');
     }

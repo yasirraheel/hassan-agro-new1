@@ -189,6 +189,7 @@ fun HassanAgroApp(viewModel: AppViewModel = viewModel()) {
                         onRegister = viewModel::register,
                         onVerifyOtp = viewModel::verifyRegistrationOtp,
                         onResendOtp = viewModel::resendRegistrationOtp,
+                        onCheckVerified = viewModel::checkVerifiedAndSignIn,
                         onCancelOtp = viewModel::cancelRegistrationOtp,
                         onClearError = viewModel::clearAuthError
                     )

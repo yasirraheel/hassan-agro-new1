@@ -32,7 +32,8 @@ data class AuthUserDto(
 data class LoginRequest(
     val email: String,
     val password: String,
-    val deviceId: String = ""
+    val deviceId: String = "",
+    val otpCode: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -55,6 +56,7 @@ data class AuthResponse(
     val token: String? = null,
     val user: AuthUserDto? = null,
     val businessId: String? = null,
+    val businessName: String? = null,
     val serverTime: Long? = null,
     val otpRequired: Boolean = false,
     val email: String? = null,

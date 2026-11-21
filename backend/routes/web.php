@@ -19,6 +19,7 @@ Route::prefix('admin')->name('admin.')->group(function () {
         Route::get('/businesses', [AdminController::class, 'businesses'])->name('businesses');
         Route::post('/businesses', [AdminController::class, 'storeBusiness'])->name('businesses.store');
         Route::put('/businesses/{id}', [AdminController::class, 'updateBusiness'])->name('businesses.update');
+        Route::post('/businesses/{id}/verify-email', [AdminController::class, 'verifyBusinessEmail'])->name('businesses.verify');
         Route::delete('/businesses/{id}', [AdminController::class, 'deleteBusiness'])->name('businesses.delete');
 
         // Inventory / Products
@@ -59,6 +60,7 @@ Route::prefix('admin')->name('admin.')->group(function () {
         Route::post('/users', [AdminController::class, 'storeUser'])->name('users.store');
         Route::put('/users/{id}', [AdminController::class, 'updateUser'])->name('users.update');
         Route::post('/users/{id}/toggle', [AdminController::class, 'toggleUser'])->name('users.toggle');
+        Route::post('/users/{id}/verify-email', [AdminController::class, 'verifyUserEmail'])->name('users.verify');
         Route::post('/users/{id}/revoke-tokens', [AdminController::class, 'revokeUserTokens'])->name('users.revoke');
         Route::delete('/users/{id}', [AdminController::class, 'deleteUser'])->name('users.delete');
 

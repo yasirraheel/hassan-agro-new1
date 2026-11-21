@@ -94,6 +94,7 @@ fun LoginScreen(
     ) -> Unit,
     onVerifyOtp: (String) -> Unit,
     onResendOtp: () -> Unit,
+    onCheckVerified: () -> Unit,
     onCancelOtp: () -> Unit,
     onClearError: () -> Unit,
     modifier: Modifier = Modifier
@@ -220,7 +221,7 @@ fun LoginScreen(
                             }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Verify Your Email",
+                                    text = if (authState.otpFromLogin) "Account Verification Required" else "Verify Your Email",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -236,7 +237,11 @@ fun LoginScreen(
                         }
 
                         Text(
-                            text = "Enter the 6-digit verification code sent to ${authState.otpEmail.ifBlank { email }} to finish creating your business account.",
+                            text = if (authState.otpFromLogin) {
+                                "Your account for ${authState.otpEmail.ifBlank { email }} is not verified yet. Enter the 6-digit verification code sent to your email to sign in."
+                            } else {
+                                "Enter the 6-digit verification code sent to ${authState.otpEmail.ifBlank { email }} to activate your business account."
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -314,7 +319,11 @@ fun LoginScreen(
                                 Spacer(Modifier.width(10.dp))
                                 Text("Verifying...", maxLines = 1, softWrap = false)
                             } else {
-                                Text("Verify & Create Business", maxLines = 1, softWrap = false)
+                                Text(
+                                    text = if (authState.otpFromLogin) "Verify & Sign In" else "Verify & Activate Business",
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
                             }
                         }
 
@@ -331,7 +340,11 @@ fun LoginScreen(
                                 enabled = !authState.isLoading,
                                 modifier = Modifier.testTag("auth_cancel_otp_button")
                             ) {
-                                Text("Edit Details", maxLines = 1, softWrap = false)
+                                Text(
+                                    text = if (authState.otpFromLogin) "Back to Sign In" else "Edit Details",
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
                             }
                             OutlinedButton(
                                 onClick = {
@@ -344,6 +357,24 @@ fun LoginScreen(
                             ) {
                                 Text("Resend Code", maxLines = 1, softWrap = false)
                             }
+                        }
+
+                        TextButton(
+                            onClick = {
+                                localError = null
+                                onCheckVerified()
+                            },
+                            enabled = !authState.isLoading,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("auth_check_admin_verified_button")
+                        ) {
+                            Text(
+                                text = "Verified manually by Admin? Sign In Now",
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                softWrap = false
+                            )
                         }
                     }
                 }

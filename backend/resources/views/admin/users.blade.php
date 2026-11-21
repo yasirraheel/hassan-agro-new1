@@ -7,7 +7,7 @@
         @if($selectedBizId !== '' && isset($bizMap[$selectedBizId]))
             Showing owners &amp; staff for <strong style="color:var(--primary);">{{ $bizMap[$selectedBizId]->name }}</strong>. Switch to "All Businesses" in the top bar to view every business's users.
         @else
-            Showing users across <strong>All Businesses</strong> — every user clearly displays which business(es) they belong to and whether they are an Owner or Staff.
+            Showing users across <strong>All Businesses</strong>. Every user clearly displays which business(es) they belong to and whether they are an Owner or Staff.
         @endif
     </div>
     <button type="button" class="btn btn-primary" onclick="openUserModal()">+ Add Admin / Staff</button>
@@ -55,11 +55,16 @@
                             @endif
                         </td>
                         <td>
-                            @if($u->is_active)
-                                <span class="badge badge-green">Active</span>
-                            @else
-                                <span class="badge badge-red">Deactivated</span>
-                            @endif
+                            <div style="display:flex; gap:4px; flex-wrap:wrap; align-items:center;">
+                                @if($u->is_active)
+                                    <span class="badge badge-green">Active</span>
+                                @else
+                                    <span class="badge badge-red">Deactivated</span>
+                                @endif
+                                @if(!($u->is_email_verified ?? true))
+                                    <span class="badge badge-amber">Email Unverified</span>
+                                @endif
+                            </div>
                             <div style="font-size:11.5px; color:var(--muted); margin-top:2px;">
                                 {{ $u->active_sessions }} active phone(s)
                                 @if($u->last_login_ms > 0)
@@ -68,6 +73,12 @@
                             </div>
                         </td>
                         <td style="text-align:right; white-space:nowrap;">
+                            @if(!($u->is_email_verified ?? true))
+                                <form method="POST" action="{{ route('admin.users.verify', $u->id) }}" style="display:inline;">
+                                    @csrf
+                                    <button type="submit" class="btn btn-sm btn-primary">Verify Email</button>
+                                </form>
+                            @endif
                             <button type="button" class="btn btn-sm" onclick='openUserModal(@json($u))'>Edit</button>
                             @if($u->active_sessions > 0)
                                 <form method="POST" action="{{ route('admin.users.revoke', $u->id) }}" style="display:inline;">
