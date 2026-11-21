@@ -27,19 +27,71 @@ object Formatters {
         return prefix + numberFormat.format(abs(amount))
     }
 
+    /**
+     * Rounds to 1 decimal place (e.g. Rs. 56,160.0) for compact sales rows and receipt totals.
+     */
+    fun formatPkrOneDecimal(amount: Double, currencySymbol: String = "Rs."): String {
+        val sym = currencySymbol.trim().ifBlank { "Rs." }
+        val prefix = if (amount < 0) "-$sym " else "$sym "
+        return prefix + String.format(Locale.US, "%,.1f", abs(amount))
+    }
+
     fun formatDecimal(amount: Double): String {
         val sign = if (amount < 0) "-" else ""
         return sign + numberFormat.format(abs(amount))
     }
 
+    /**
+     * Clean compact currency format with 2 decimals for millions (e.g. Rs. 1.25M)
+     * and readable K notation for large thousands.
+     */
     fun formatCompactPkr(amount: Double, currencySymbol: String = "Rs."): String {
         val sym = currencySymbol.trim().ifBlank { "Rs." }
         val absVal = abs(amount)
         val sign = if (amount < 0) "-" else ""
         return when {
-            absVal >= 1_000_000 -> "${sign}$sym ${String.format(Locale.US, "%.1fM", absVal / 1_000_000.0)}"
-            absVal >= 100_000 -> "${sign}$sym ${String.format(Locale.US, "%.1fK", absVal / 1_000.0)}"
+            absVal >= 1_000_000 -> "${sign}$sym ${String.format(Locale.US, "%.2fM", absVal / 1_000_000.0)}"
+            absVal >= 100_000 -> "${sign}$sym ${formatTrimmedDecimals(absVal / 1_000.0, 1)}K"
             else -> formatPkr(amount, sym)
+        }
+    }
+
+    /**
+     * Compact K / M currency format starting from 1,000 (e.g. Rs. 1K, Rs. 56.2K, Rs. 1.25M)
+     * used in Dashboard hero sub-metrics and Reports KPI cards so values stay concise and readable.
+     */
+    fun formatShortPkr(amount: Double, currencySymbol: String = "Rs."): String {
+        val sym = currencySymbol.trim().ifBlank { "Rs." }
+        val absVal = abs(amount)
+        val sign = if (amount < 0) "-" else ""
+        return when {
+            absVal >= 1_000_000 -> "${sign}$sym ${String.format(Locale.US, "%.2fM", absVal / 1_000_000.0)}"
+            absVal >= 1_000 -> "${sign}$sym ${formatTrimmedDecimals(absVal / 1_000.0, 1)}K"
+            else -> formatPkr(amount, sym)
+        }
+    }
+
+    /**
+     * High-precision 2-decimal compact currency format for Stock Bought & Stock Asset Value
+     * (e.g. Rs. 1.25M, Rs. 142.50K) so remainder amounts remain clearly visible.
+     */
+    fun formatStockCompactPkr(amount: Double, currencySymbol: String = "Rs."): String {
+        val sym = currencySymbol.trim().ifBlank { "Rs." }
+        val absVal = abs(amount)
+        val sign = if (amount < 0) "-" else ""
+        return when {
+            absVal >= 1_000_000 -> "${sign}$sym ${String.format(Locale.US, "%.2fM", absVal / 1_000_000.0)}"
+            absVal >= 100_000 -> "${sign}$sym ${String.format(Locale.US, "%.2fK", absVal / 1_000.0)}"
+            else -> formatPkr(amount, sym)
+        }
+    }
+
+    private fun formatTrimmedDecimals(value: Double, maxDecimals: Int): String {
+        val formatted = String.format(Locale.US, "%.${maxDecimals}f", value)
+        return if (formatted.contains(".")) {
+            formatted.trimEnd('0').trimEnd('.')
+        } else {
+            formatted
         }
     }
 

@@ -187,6 +187,9 @@ fun HassanAgroApp(viewModel: AppViewModel = viewModel()) {
                         onPreviewThemeChange = { signupPreviewThemeKey = it },
                         onLogin = viewModel::login,
                         onRegister = viewModel::register,
+                        onVerifyOtp = viewModel::verifyRegistrationOtp,
+                        onResendOtp = viewModel::resendRegistrationOtp,
+                        onCancelOtp = viewModel::cancelRegistrationOtp,
                         onClearError = viewModel::clearAuthError
                     )
                 }
@@ -225,6 +228,7 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
     val teamState by viewModel.teamState.collectAsStateWithLifecycle()
     val pendingSyncCount by viewModel.pendingSyncCount.collectAsStateWithLifecycle()
     val appearanceMode by viewModel.appearanceMode.collectAsStateWithLifecycle()
+    val autoIncludeTax by viewModel.autoIncludeTax.collectAsStateWithLifecycle()
     val dashboardPeriod by viewModel.dashboardPeriod.collectAsStateWithLifecycle()
     val inventoryFilter by viewModel.inventoryFilter.collectAsStateWithLifecycle()
     val billingDraft by viewModel.billingDraft.collectAsStateWithLifecycle()
@@ -668,6 +672,7 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
                                 authSession = authSession,
                                 businesses = businesses,
                                 activeBusiness = activeBusiness,
+                                autoIncludeTax = autoIncludeTax,
                                 appearanceMode = appearanceMode,
                                 serverConfig = serverConfig,
                                 syncState = syncState,
@@ -679,6 +684,7 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
                                 onAppearanceModeChange = viewModel::setAppearanceMode,
                                 onSwitchBusiness = viewModel::switchBusiness,
                                 onSaveBusiness = viewModel::saveBusiness,
+                                onUpdateTaxSettings = viewModel::updateBusinessTaxSettings,
                                 onDeleteBusiness = viewModel::deleteBusiness,
                                 onUpdateBusinessLogo = viewModel::updateBusinessLogo,
                                 onSaveServerConfig = viewModel::saveServerConfig,
@@ -746,7 +752,7 @@ private fun AuthenticatedBusinessApp(viewModel: AppViewModel) {
                             viewModel.addProductToCart(found)
                             viewModel.emitMessage("Added ${found.name} to bill")
                         } else {
-                            viewModel.emitMessage("Barcode $scannedCode not found — add it in Stock first")
+                            viewModel.emitMessage("Barcode $scannedCode not found. Add it in Stock first.")
                         }
                     }
                 }

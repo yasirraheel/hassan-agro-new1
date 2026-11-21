@@ -44,7 +44,8 @@ data class RegisterRequest(
     val businessType: String = "GENERAL",
     val themeKey: String = "OCEAN",
     val currencySymbol: String = "Rs.",
-    val deviceId: String = ""
+    val deviceId: String = "",
+    val otpCode: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -54,7 +55,10 @@ data class AuthResponse(
     val token: String? = null,
     val user: AuthUserDto? = null,
     val businessId: String? = null,
-    val serverTime: Long? = null
+    val serverTime: Long? = null,
+    val otpRequired: Boolean = false,
+    val email: String? = null,
+    val expiresInSeconds: Int? = null
 )
 
 @JsonClass(generateAdapter = true)

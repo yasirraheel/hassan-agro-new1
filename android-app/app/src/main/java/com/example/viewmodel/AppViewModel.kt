@@ -8,6 +8,7 @@ import com.example.data.local.AppDatabase
 import com.example.data.local.AuthSession
 import com.example.data.local.BusinessEntity
 import com.example.data.local.CustomerEntity
+import com.example.data.local.CustomizationJson
 import com.example.data.local.ExpenseEntity
 import com.example.data.local.ExpiryStatus
 import com.example.data.local.InvoiceEntity
@@ -21,6 +22,7 @@ import com.example.data.local.PricingTier
 import com.example.data.local.ExpenseCategory
 import com.example.data.local.ProductEntity
 import com.example.data.local.ServerSyncConfig
+import com.example.data.local.TaxPreset
 import com.example.data.local.ThemeAppearanceMode
 import com.example.data.remote.CustomServerClientFactory
 import com.example.data.remote.TeamPermissionItemDto
@@ -63,7 +65,11 @@ enum class InventoryFilter(val label: String) {
 
 data class AuthUiState(
     val isLoading: Boolean = false,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val otpRequired: Boolean = false,
+    val otpEmail: String = "",
+    val otpBusinessName: String = "",
+    val otpInfoMessage: String? = null
 )
 
 data class SyncUiState(
@@ -116,8 +122,7 @@ data class BillingDraftState(
 
     val tenderedAmount: Double
         get() = when {
-            isCreditSale && amountReceivedText.isBlank() -> 0.0
-            amountReceivedText.isBlank() -> grandTotal
+            amountReceivedText.isBlank() -> 0.0
             else -> (amountReceivedText.toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0)
         }
 
@@ -137,7 +142,8 @@ data class GeneratedInvoiceEvent(
     val business: BusinessEntity,
     val invoiceWithItems: InvoiceWithItems,
     val pdfFile: File,
-    val style: InvoicePdfStyle = InvoicePdfStyle.THERMAL_COUPON
+    val style: InvoicePdfStyle = InvoicePdfStyle.THERMAL_COUPON,
+    val imageFile: File? = null
 )
 
 data class TeamUiState(
@@ -170,7 +176,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         defaultTaxRate = 0.0
     )
 
-    // Nullable until DataStore emits the real persisted session — prevents Login screen flash on startup!
+    // Nullable until DataStore emits the real persisted session (prevents Login screen flash on startup)
     val authSessionLoaded: StateFlow<AuthSession?> = repository.authSessionFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
@@ -185,6 +191,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _authUiState = MutableStateFlow(AuthUiState())
     val authUiState: StateFlow<AuthUiState> = _authUiState.asStateFlow()
+
+    private data class PendingRegistration(
+        val serverUrl: String,
+        val name: String,
+        val email: String,
+        val password: String,
+        val businessName: String,
+        val businessType: String,
+        val themeKey: String,
+        val currencySymbol: String
+    )
+    private var pendingRegistration: PendingRegistration? = null
 
     fun setAppearanceMode(mode: ThemeAppearanceMode) {
         viewModelScope.launch {
@@ -215,6 +233,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     ) { list, activeId ->
         list.firstOrNull { it.id == activeId } ?: list.firstOrNull() ?: fallbackBusiness
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), fallbackBusiness)
+
+    val autoIncludeTax: StateFlow<Boolean> = combine(
+        activeBusiness,
+        repository.autoIncludeTaxMapFlow
+    ) { biz, map ->
+        map[biz.id] ?: (biz.defaultTaxRate > 0.0)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     val customers: StateFlow<List<CustomerEntity>> = activeBusiness
         .flatMapLatest { repository.observeCustomers(it.id) }
@@ -302,23 +327,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             repository.refreshSession()
         }
         viewModelScope.launch {
-            activeBusiness.collect { biz ->
-                val defaultMethod = biz.paymentMethods().firstOrNull() ?: PaymentMethod.CASH.label
-                _billingDraft.update { draft ->
-                    if (draft.cartLines.isEmpty()) {
-                        draft.copy(
-                            taxEnabled = biz.defaultTaxRate > 0.0,
-                            taxRateText = if (biz.defaultTaxRate > 0.0) biz.defaultTaxRate.toString() else "0",
-                            paymentMethod = defaultMethod
-                        )
-                    } else {
-                        draft
+            combine(activeBusiness, autoIncludeTax) { biz, autoTax -> biz to autoTax }
+                .collect { (biz, autoTax) ->
+                    val defaultMethod = biz.paymentMethods().firstOrNull() ?: PaymentMethod.CASH.label
+                    _billingDraft.update { draft ->
+                        if (draft.cartLines.isEmpty()) {
+                            draft.copy(
+                                taxEnabled = autoTax && biz.defaultTaxRate > 0.0,
+                                taxRateText = if (biz.defaultTaxRate > 0.0) Formatters.formatDecimal(biz.defaultTaxRate) else "0",
+                                paymentMethod = defaultMethod
+                            )
+                        } else {
+                            draft
+                        }
+                    }
+                    if (!biz.trackExpiry && (_inventoryFilter.value == InventoryFilter.EXPIRED || _inventoryFilter.value == InventoryFilter.EXPIRING_SOON)) {
+                        _inventoryFilter.value = InventoryFilter.ALL
                     }
                 }
-                if (!biz.trackExpiry && (_inventoryFilter.value == InventoryFilter.EXPIRED || _inventoryFilter.value == InventoryFilter.EXPIRING_SOON)) {
-                    _inventoryFilter.value = InventoryFilter.ALL
-                }
-            }
         }
         viewModelScope.launch {
             combine(serverConfig, authSession) { cfg, session -> cfg to session }
@@ -369,8 +395,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         currencySymbol: String
     ) {
         if (_authUiState.value.isLoading) return
+        val pending = PendingRegistration(
+            serverUrl = serverUrl,
+            name = name,
+            email = email,
+            password = password,
+            businessName = businessName,
+            businessType = businessType,
+            themeKey = themeKey,
+            currencySymbol = currencySymbol
+        )
+        pendingRegistration = pending
         viewModelScope.launch {
-            _authUiState.update { it.copy(isLoading = true, errorMessage = null) }
+            _authUiState.update { it.copy(isLoading = true, errorMessage = null, otpInfoMessage = null) }
             val result = repository.register(
                 serverBaseUrl = serverUrl,
                 name = name,
@@ -379,17 +416,137 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 businessName = businessName,
                 businessType = businessType,
                 themeKey = themeKey,
-                currencySymbol = currencySymbol
+                currencySymbol = currencySymbol,
+                otpCode = null
+            )
+            if (result.success && result.otpRequired) {
+                _authUiState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = null,
+                        otpRequired = true,
+                        otpEmail = result.otpEmail.ifBlank { email.trim() },
+                        otpBusinessName = businessName.trim(),
+                        otpInfoMessage = result.message
+                    )
+                }
+                emitMessage(result.message)
+            } else {
+                _authUiState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = if (result.success) null else result.message,
+                        otpRequired = false
+                    )
+                }
+                if (result.success) {
+                    pendingRegistration = null
+                    emitMessage(result.message)
+                }
+            }
+        }
+    }
+
+    fun verifyRegistrationOtp(otpCode: String) {
+        val pending = pendingRegistration ?: return
+        if (_authUiState.value.isLoading) return
+        val cleanOtp = otpCode.trim()
+        if (cleanOtp.length < 6) {
+            _authUiState.update { it.copy(errorMessage = "Please enter the 6-digit verification code.") }
+            return
+        }
+        viewModelScope.launch {
+            _authUiState.update { it.copy(isLoading = true, errorMessage = null) }
+            val result = repository.register(
+                serverBaseUrl = pending.serverUrl,
+                name = pending.name,
+                email = pending.email,
+                password = pending.password,
+                businessName = pending.businessName,
+                businessType = pending.businessType,
+                themeKey = pending.themeKey,
+                currencySymbol = pending.currencySymbol,
+                otpCode = cleanOtp
             )
             _authUiState.update {
                 it.copy(
                     isLoading = false,
-                    errorMessage = if (result.success) null else result.message
+                    errorMessage = if (result.success) null else result.message,
+                    otpRequired = !result.success
+                )
+            }
+            if (result.success) {
+                pendingRegistration = null
+                emitMessage(result.message)
+            }
+        }
+    }
+
+    fun resendRegistrationOtp() {
+        val pending = pendingRegistration ?: return
+        if (_authUiState.value.isLoading) return
+        viewModelScope.launch {
+            _authUiState.update { it.copy(isLoading = true, errorMessage = null) }
+            val result = repository.register(
+                serverBaseUrl = pending.serverUrl,
+                name = pending.name,
+                email = pending.email,
+                password = pending.password,
+                businessName = pending.businessName,
+                businessType = pending.businessType,
+                themeKey = pending.themeKey,
+                currencySymbol = pending.currencySymbol,
+                otpCode = null
+            )
+            _authUiState.update {
+                it.copy(
+                    isLoading = false,
+                    errorMessage = if (result.success) null else result.message,
+                    otpInfoMessage = if (result.success) result.message else it.otpInfoMessage
                 )
             }
             if (result.success) {
                 emitMessage(result.message)
             }
+        }
+    }
+
+    fun cancelRegistrationOtp() {
+        _authUiState.update {
+            it.copy(
+                otpRequired = false,
+                errorMessage = null,
+                otpInfoMessage = null
+            )
+        }
+    }
+
+    fun updateBusinessTaxSettings(
+        defaultTaxRate: Double,
+        autoInclude: Boolean,
+        taxPresets: List<TaxPreset>
+    ) {
+        viewModelScope.launch {
+            val biz = activeBusiness.value
+            val cleanRate = defaultTaxRate.coerceAtLeast(0.0)
+            val updated = biz.copy(
+                defaultTaxRate = cleanRate,
+                taxPresetsJson = CustomizationJson.encodeTaxPresets(taxPresets)
+            )
+            repository.saveBusiness(updated)
+            repository.setAutoIncludeTaxForBusiness(biz.id, autoInclude)
+            _billingDraft.update { draft ->
+                if (draft.cartLines.isEmpty()) {
+                    draft.copy(
+                        taxEnabled = autoInclude && cleanRate > 0.0,
+                        taxRateText = if (cleanRate > 0.0) Formatters.formatDecimal(cleanRate) else "0"
+                    )
+                } else {
+                    draft
+                }
+            }
+            emitMessage("Sales tax settings updated")
+            triggerAutoSyncIfEnabled()
         }
     }
 
@@ -676,7 +833,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateBillingCustomer(name: String, phone: String, email: String) {
-        _billingDraft.update { it.copy(customerName = name, customerPhone = phone, customerEmail = email) }
+        _billingDraft.update { draft ->
+            val keepCustomerId = if (draft.customerId.isNotBlank()) {
+                val linked = customers.value.firstOrNull { it.id == draft.customerId }
+                if (linked != null && linked.name == name) draft.customerId else ""
+            } else {
+                ""
+            }
+            draft.copy(
+                customerId = keepCustomerId,
+                customerName = name,
+                customerPhone = phone,
+                customerEmail = email
+            )
+        }
     }
 
     fun updateBillingTier(tier: PricingTier) {
@@ -778,10 +948,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun clearBillingDraft() {
         val biz = activeBusiness.value
         val defaultTax = biz.defaultTaxRate
+        val shouldAutoTax = autoIncludeTax.value && defaultTax > 0.0
         val defaultMethod = biz.paymentMethods().firstOrNull() ?: PaymentMethod.CASH.label
         _billingDraft.value = BillingDraftState(
-            taxEnabled = defaultTax > 0.0,
-            taxRateText = if (defaultTax > 0.0) defaultTax.toString() else "0",
+            taxEnabled = shouldAutoTax,
+            taxRateText = if (defaultTax > 0.0) Formatters.formatDecimal(defaultTax) else "0",
             paymentMethod = defaultMethod
         )
     }
@@ -827,6 +998,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 resolvedCustomerId = newCustomer.id
             }
 
+            val resolvedStatus = draft.computedPaymentStatus
+            val resolvedPaymentMethod = when {
+                draft.isCreditSale || resolvedStatus == InvoicePaymentStatus.CREDIT -> "Credit (Udhaar)"
+                else -> draft.paymentMethod
+            }
             val invoiceNumber = repository.nextInvoiceNumber(business)
             val invoiceId = UUID.randomUUID().toString()
             val invoiceEntity = InvoiceEntity(
@@ -844,8 +1020,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 taxRatePercent = draft.taxRatePercent,
                 taxAmount = draft.taxAmount,
                 grandTotal = draft.grandTotal,
-                paymentMethod = if (draft.isCreditSale) "Credit (Udhaar)" else draft.paymentMethod,
-                paymentStatus = draft.computedPaymentStatus.name,
+                paymentMethod = resolvedPaymentMethod,
+                paymentStatus = resolvedStatus.name,
                 amountPaid = draft.appliedPaidAmount,
                 balanceDue = draft.balanceDue,
                 isReturned = false,
@@ -874,11 +1050,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 performedByName = actor.userName
             )
             val defaultStyle = InvoicePdfStyle.THERMAL_COUPON
-            val pdfFile = withContext(Dispatchers.IO) {
-                InvoicePdfGenerator.generateInvoicePdf(getApplication(), business, saved, defaultStyle)
+            val (pdfFile, imgFile) = withContext(Dispatchers.IO) {
+                val pdf = InvoicePdfGenerator.generateInvoicePdf(getApplication(), business, saved, defaultStyle)
+                val img = InvoicePdfGenerator.generateThermalReceiptImage(getApplication(), business, saved)
+                pdf to img
             }
             clearBillingDraft()
-            _generatedInvoice.value = GeneratedInvoiceEvent(business, saved, pdfFile, defaultStyle)
+            _generatedInvoice.value = GeneratedInvoiceEvent(business, saved, pdfFile, defaultStyle, imgFile)
             emitMessage("POS Sale $invoiceNumber completed by ${actor.userName.ifBlank { "Admin" }}")
             triggerAutoSyncIfEnabled()
         }
@@ -914,10 +1092,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val biz = businesses.value.firstOrNull { it.id == invoiceWithItems.invoice.businessId }
                 ?: activeBusiness.value
-            val pdfFile = withContext(Dispatchers.IO) {
-                InvoicePdfGenerator.generateInvoicePdf(getApplication(), biz, invoiceWithItems, style)
+            val (pdfFile, imgFile) = withContext(Dispatchers.IO) {
+                val pdf = InvoicePdfGenerator.generateInvoicePdf(getApplication(), biz, invoiceWithItems, style)
+                val img = if (style == InvoicePdfStyle.THERMAL_COUPON) {
+                    InvoicePdfGenerator.generateThermalReceiptImage(getApplication(), biz, invoiceWithItems)
+                } else {
+                    null
+                }
+                pdf to img
             }
-            _generatedInvoice.value = GeneratedInvoiceEvent(biz, invoiceWithItems, pdfFile, style)
+            _generatedInvoice.value = GeneratedInvoiceEvent(biz, invoiceWithItems, pdfFile, style, imgFile)
         }
     }
 
@@ -925,10 +1109,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val current = _generatedInvoice.value ?: return
         if (current.style == style) return
         viewModelScope.launch {
-            val pdfFile = withContext(Dispatchers.IO) {
-                InvoicePdfGenerator.generateInvoicePdf(getApplication(), current.business, current.invoiceWithItems, style)
+            val (pdfFile, imgFile) = withContext(Dispatchers.IO) {
+                val pdf = InvoicePdfGenerator.generateInvoicePdf(getApplication(), current.business, current.invoiceWithItems, style)
+                val img = if (style == InvoicePdfStyle.THERMAL_COUPON) {
+                    current.imageFile ?: InvoicePdfGenerator.generateThermalReceiptImage(getApplication(), current.business, current.invoiceWithItems)
+                } else {
+                    current.imageFile
+                }
+                pdf to img
             }
-            _generatedInvoice.value = current.copy(pdfFile = pdfFile, style = style)
+            _generatedInvoice.value = current.copy(pdfFile = pdfFile, style = style, imageFile = imgFile)
         }
     }
 

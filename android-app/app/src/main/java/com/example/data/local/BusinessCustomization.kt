@@ -27,7 +27,7 @@ enum class AppPermission(val key: String, val label: String) {
 
 /**
  * Industry presets that pre-fill categories, payment methods, tracking toggles & theme
- * when creating a new business — all 100% editable/deletable afterwards!
+ * when creating a new business, all 100% editable afterwards.
  */
 enum class BusinessTypePreset(
     val key: String,

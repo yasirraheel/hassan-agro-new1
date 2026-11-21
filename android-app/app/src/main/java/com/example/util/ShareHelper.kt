@@ -16,6 +16,44 @@ object ShareHelper {
         )
     }
 
+    fun shareImageOnWhatsApp(
+        context: Context,
+        imageFile: File,
+        caption: String
+    ): Boolean {
+        val uri = getShareUri(context, imageFile)
+        val pm = context.packageManager
+        val whatsAppPackage = listOf("com.whatsapp", "com.whatsapp.w4b").firstOrNull { pkg ->
+            try {
+                pm.getPackageInfo(pkg, 0)
+                true
+            } catch (_: PackageManager.NameNotFoundException) {
+                false
+            }
+        }
+
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "image/png"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            if (caption.isNotBlank()) {
+                putExtra(Intent.EXTRA_TEXT, caption)
+            }
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            if (whatsAppPackage != null) {
+                setPackage(whatsAppPackage)
+            }
+        }
+        return try {
+            context.startActivity(
+                if (whatsAppPackage != null) intent
+                else Intent.createChooser(intent, "Share Receipt Image via WhatsApp")
+            )
+            true
+        } catch (_: Exception) {
+            shareFileGeneric(context, imageFile, "image/png", "Share Receipt Image", caption)
+        }
+    }
+
     fun sharePdfOnWhatsApp(
         context: Context,
         pdfFile: File,
@@ -52,16 +90,17 @@ object ShareHelper {
         }
     }
 
-    fun sharePdfViaEmail(
+    fun shareFileViaEmail(
         context: Context,
-        pdfFile: File,
+        file: File,
+        mimeType: String,
         recipientEmail: String,
         subject: String,
         body: String
     ): Boolean {
-        val uri = getShareUri(context, pdfFile)
+        val uri = getShareUri(context, file)
         val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "application/pdf"
+            type = mimeType
             if (recipientEmail.isNotBlank()) {
                 putExtra(Intent.EXTRA_EMAIL, arrayOf(recipientEmail.trim()))
             }
@@ -71,12 +110,27 @@ object ShareHelper {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         return try {
-            context.startActivity(Intent.createChooser(intent, "Send Invoice via Email"))
+            context.startActivity(Intent.createChooser(intent, "Send Receipt via Email"))
             true
         } catch (_: Exception) {
             false
         }
     }
+
+    fun sharePdfViaEmail(
+        context: Context,
+        pdfFile: File,
+        recipientEmail: String,
+        subject: String,
+        body: String
+    ): Boolean = shareFileViaEmail(
+        context = context,
+        file = pdfFile,
+        mimeType = "application/pdf",
+        recipientEmail = recipientEmail,
+        subject = subject,
+        body = body
+    )
 
     fun shareFileGeneric(
         context: Context,

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Services\ProfitLossService;
 use App\Services\RbacService;
+use App\Services\SmtpOtpService;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -18,7 +19,8 @@ class AdminController extends Controller
 {
     public function __construct(
         private readonly RbacService $rbac,
-        private readonly ProfitLossService $pl
+        private readonly ProfitLossService $pl,
+        private readonly SmtpOtpService $smtpOtp
     ) {
     }
 
@@ -1590,11 +1592,58 @@ class AdminController extends Controller
         $currentAdmin = DB::table('app_users')->where('id', $this->currentAdminId($request))->first();
         $adminEmail = (string) ($currentAdmin->email ?? $request->session()->get('bm_admin_email', config('sync.admin_email', '')));
         $adminName = (string) ($currentAdmin->name ?? $this->currentAdminName($request));
+        $smtpSettings = $this->smtpOtp->getSettings();
 
         return view('admin.settings', compact(
             'businesses', 'selectedBizId', 'activeTheme', 'stats', 'lastSyncMs',
-            'apiBaseUrl', 'apiToken', 'adminEmail', 'adminName'
+            'apiBaseUrl', 'apiToken', 'adminEmail', 'adminName', 'smtpSettings'
         ));
+    }
+
+    public function updateSmtpSettings(Request $request): RedirectResponse
+    {
+        $data = $request->validate([
+            'smtp_host' => ['nullable', 'string', 'max:191'],
+            'smtp_port' => ['nullable', 'integer', 'min:1', 'max:65535'],
+            'smtp_encryption' => ['nullable', 'in:tls,ssl,none'],
+            'smtp_username' => ['nullable', 'string', 'max:191'],
+            'smtp_password' => ['nullable', 'string', 'max:255'],
+            'smtp_from_address' => ['nullable', 'email', 'max:191'],
+            'smtp_from_name' => ['nullable', 'string', 'max:120'],
+        ]);
+
+        $otpEnabled = $request->boolean('otp_verification_enabled');
+        $existing = $this->smtpOtp->getSettings();
+        $resolvedHost = trim((string) ($data['smtp_host'] ?? ''));
+        $resolvedFrom = trim((string) ($data['smtp_from_address'] ?? '')) ?: trim((string) ($data['smtp_username'] ?? ''));
+
+        if ($otpEnabled && ($resolvedHost === '' || $resolvedFrom === '')) {
+            return back()->withInput()->with('error', 'To enable Email OTP Verification, please provide at least the SMTP Host and From Email (or SMTP Username).');
+        }
+
+        $data['otp_verification_enabled'] = $otpEnabled;
+        if (empty($data['smtp_password']) && !empty($existing['smtp_password'])) {
+            $data['smtp_password'] = $existing['smtp_password'];
+        }
+
+        $this->smtpOtp->saveSettings($data);
+
+        $statusLabel = $otpEnabled ? 'enabled' : 'disabled';
+        return redirect()->route('admin.settings')->with('success', "SMTP settings saved. Registration Email OTP verification is now {$statusLabel}.");
+    }
+
+    public function sendTestSmtpEmail(Request $request): RedirectResponse
+    {
+        $data = $request->validate([
+            'test_email' => ['required', 'email', 'max:191'],
+        ]);
+
+        try {
+            $this->smtpOtp->sendTestEmail(strtolower(trim($data['test_email'])));
+            return redirect()->route('admin.settings')->with('success', "Test OTP email sent to {$data['test_email']}.");
+        } catch (\Throwable $e) {
+            return redirect()->route('admin.settings')->with('error', 'SMTP test failed: ' . $e->getMessage());
+        }
     }
 
     // ---------- CSV Exports ----------

@@ -153,30 +153,43 @@ fun AppConfirmDeleteDialog(
                 ) {
                     OutlinedButton(
                         onClick = onDismiss,
-                        shape = MaterialTheme.shapes.medium,
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                         modifier = Modifier
-                            .weight(1f)
+                            .weight(0.85f)
                             .height(48.dp)
                             .testTag("confirm_delete_cancel_btn")
                     ) {
-                        Text("Cancel", maxLines = 1, softWrap = false)
+                        Text(
+                            text = "Cancel",
+                            style = MaterialTheme.typography.labelLarge,
+                            maxLines = 1,
+                            softWrap = false
+                        )
                     }
                     Button(
                         onClick = {
                             onConfirm()
                             onDismiss()
                         },
-                        shape = MaterialTheme.shapes.medium,
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.error,
                             contentColor = MaterialTheme.colorScheme.onError
                         ),
                         modifier = Modifier
-                            .weight(1f)
+                            .weight(1.25f)
                             .height(48.dp)
                             .testTag("confirm_delete_confirm_btn")
                     ) {
-                        Text(confirmText, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+                        Text(
+                            text = confirmText,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
                     }
                 }
             }

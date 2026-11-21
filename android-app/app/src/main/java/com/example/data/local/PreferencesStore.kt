@@ -84,10 +84,15 @@ class PreferencesStore(private val context: Context) {
         val AUTH_PERMISSIONS_JSON = stringPreferencesKey("auth_permissions_json")
         val AUTH_BUSINESS_IDS_JSON = stringPreferencesKey("auth_business_ids_json")
         val APPEARANCE_MODE = stringPreferencesKey("appearance_mode")
+        val AUTO_INCLUDE_TAX_MAP_JSON = stringPreferencesKey("auto_include_tax_map_json")
     }
 
     val appearanceModeFlow: Flow<ThemeAppearanceMode> = context.dataStore.data.map { prefs ->
         ThemeAppearanceMode.fromKey(prefs[Keys.APPEARANCE_MODE])
+    }
+
+    val autoIncludeTaxMapFlow: Flow<Map<String, Boolean>> = context.dataStore.data.map { prefs ->
+        parseBooleanMap(prefs[Keys.AUTO_INCLUDE_TAX_MAP_JSON])
     }
 
     val activeBusinessIdFlow: Flow<String> = context.dataStore.data.map { prefs ->
@@ -137,6 +142,36 @@ class PreferencesStore(private val context: Context) {
 
     suspend fun setAppearanceMode(mode: ThemeAppearanceMode) {
         context.dataStore.edit { it[Keys.APPEARANCE_MODE] = mode.key }
+    }
+
+    suspend fun setAutoIncludeTaxForBusiness(businessId: String, enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            val current = parseBooleanMap(prefs[Keys.AUTO_INCLUDE_TAX_MAP_JSON]).toMutableMap()
+            current[businessId] = enabled
+            prefs[Keys.AUTO_INCLUDE_TAX_MAP_JSON] = encodeBooleanMap(current)
+        }
+    }
+
+    private fun parseBooleanMap(raw: String?): Map<String, Boolean> {
+        if (raw.isNullOrBlank()) return emptyMap()
+        return try {
+            val obj = org.json.JSONObject(raw)
+            val result = mutableMapOf<String, Boolean>()
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                result[key] = obj.optBoolean(key, false)
+            }
+            result
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    private fun encodeBooleanMap(map: Map<String, Boolean>): String {
+        val obj = org.json.JSONObject()
+        map.forEach { (k, v) -> obj.put(k, v) }
+        return obj.toString()
     }
 
     suspend fun saveServerUrlOnly(baseUrl: String) {

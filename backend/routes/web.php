@@ -66,5 +66,7 @@ Route::prefix('admin')->name('admin.')->group(function () {
         Route::get('/reports', [AdminController::class, 'reports'])->name('reports');
         Route::get('/settings', [AdminController::class, 'settings'])->name('settings');
         Route::put('/settings/account', [AdminController::class, 'updateAdminAccount'])->name('settings.account');
+        Route::put('/settings/smtp', [AdminController::class, 'updateSmtpSettings'])->name('settings.smtp');
+        Route::post('/settings/smtp/test', [AdminController::class, 'sendTestSmtpEmail'])->name('settings.smtp.test');
     });
 });

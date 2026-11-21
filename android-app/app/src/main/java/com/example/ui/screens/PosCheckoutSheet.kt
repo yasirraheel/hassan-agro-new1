@@ -31,6 +31,9 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PauseCircleOutline
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PersonAdd
@@ -221,7 +224,9 @@ fun PosCheckoutSheet(
             }
         }
 
-        // Saved Customer Picker Bar
+        var showInlineCustomerSuggestions by remember { mutableStateOf(false) }
+
+        // Saved Customer Picker Bar (clean header + separated Pick and New buttons)
         Surface(
             shape = MaterialTheme.shapes.medium,
             color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
@@ -230,9 +235,7 @@ fun PosCheckoutSheet(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { showCustomerPicker = true }
-                    .padding(horizontal = 12.dp, vertical = 10.dp)
-                    .testTag("pos_select_saved_customer_btn"),
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -247,31 +250,39 @@ fun PosCheckoutSheet(
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(Modifier.width(8.dp))
-                    Column {
+                    if (selectedCustomer != null) {
+                        Column {
+                            Text(
+                                text = selectedCustomer.name,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "${selectedCustomer.phone.ifBlank { "No phone" }} • ${business.tierLabel(PricingTier.fromName(selectedCustomer.pricingTier))}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    } else {
                         Text(
-                            text = if (selectedCustomer != null) "Saved Customer: ${selectedCustomer.name}" else "Select Saved Customer",
+                            text = "Select Saved Customer",
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.primary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        Text(
-                            text = if (selectedCustomer != null)
-                                "${selectedCustomer.phone.ifBlank { "No phone" }} • ${business.tierLabel(PricingTier.fromName(selectedCustomer.pricingTier))} tier"
-                            else
-                                "${customers.size} saved customers • auto-fills phone & tier",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
                     }
                 }
+                Spacer(Modifier.width(8.dp))
                 if (selectedCustomer != null) {
                     IconButton(
                         onClick = { onSelectSavedCustomer(null) },
                         modifier = Modifier
-                            .size(34.dp)
+                            .size(36.dp)
                             .testTag("pos_checkout_unlink_customer_btn")
                     ) {
                         Icon(Icons.Default.Close, contentDescription = "Unlink customer", modifier = Modifier.size(18.dp))
@@ -279,42 +290,172 @@ fun PosCheckoutSheet(
                 } else {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            text = "Pick",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
-                        )
+                        OutlinedButton(
+                            onClick = { showCustomerPicker = true },
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                            modifier = Modifier
+                                .height(36.dp)
+                                .testTag("pos_select_saved_customer_btn")
+                        ) {
+                            Text("Pick", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                        }
                         FilledTonalButton(
                             onClick = {
                                 quickCreatePrefill = draft.customerName.trim() to draft.customerPhone.trim()
                             },
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                             modifier = Modifier
-                                .height(34.dp)
+                                .height(36.dp)
                                 .testTag("pos_checkout_new_customer_btn")
                         ) {
                             Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(15.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("New", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
+                            Text("New", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                         }
                     }
                 }
             }
         }
 
-        OutlinedTextField(
-            value = draft.customerName,
-            onValueChange = { onUpdateCustomer(it, draft.customerPhone, draft.customerEmail) },
-            label = { Text("Customer / Dealer Name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            placeholder = { Text("Walk-in Customer", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("billing_customer_name_input")
-        )
+        // Inline searchable Customer / Dealer Name input with live saved-customer dropdown
+        val inlineFilteredCustomers = remember(customers, draft.customerName) {
+            val q = draft.customerName.trim()
+            if (q.isBlank()) {
+                customers.take(6)
+            } else {
+                customers.filter { c ->
+                    c.name.contains(q, ignoreCase = true) || c.phone.contains(q, ignoreCase = true)
+                }.take(6)
+            }
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            OutlinedTextField(
+                value = draft.customerName,
+                onValueChange = { typed ->
+                    onUpdateCustomer(typed, draft.customerPhone, draft.customerEmail)
+                    showInlineCustomerSuggestions = customers.isNotEmpty()
+                },
+                label = { Text("Customer / Dealer Name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                placeholder = { Text("Search saved customer or enter name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                trailingIcon = if (customers.isNotEmpty()) {
+                    {
+                        IconButton(
+                            onClick = { showInlineCustomerSuggestions = !showInlineCustomerSuggestions },
+                            modifier = Modifier.testTag("billing_customer_dropdown_toggle")
+                        ) {
+                            Icon(
+                                imageVector = if (showInlineCustomerSuggestions) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                contentDescription = "Toggle saved customers"
+                            )
+                        }
+                    }
+                } else null,
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("billing_customer_name_input")
+            )
+
+            AnimatedVisibility(visible = showInlineCustomerSuggestions && selectedCustomer == null && customers.isNotEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                    shadowElevation = 3.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("billing_customer_inline_dropdown")
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        if (inlineFilteredCustomers.isEmpty()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        showInlineCustomerSuggestions = false
+                                        quickCreatePrefill = draft.customerName.trim() to draft.customerPhone.trim()
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.PersonAdd,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "Add \"${draft.customerName.trim()}\" as new customer",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        } else {
+                            inlineFilteredCustomers.forEachIndexed { idx, cust ->
+                                val tierName = business.tierLabel(PricingTier.fromName(cust.pricingTier))
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            onSelectSavedCustomer(cust)
+                                            showInlineCustomerSuggestions = false
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 9.dp)
+                                        .testTag("billing_inline_customer_${cust.id}"),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = cust.name,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        if (cust.phone.isNotBlank()) {
+                                            Text(
+                                                text = cust.phone,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                    Spacer(Modifier.width(8.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = MaterialTheme.colorScheme.secondaryContainer
+                                    ) {
+                                        Text(
+                                            text = tierName,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                                if (idx < inlineFilteredCustomers.lastIndex) {
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(
                 value = draft.customerPhone,
@@ -460,15 +601,24 @@ fun PosCheckoutSheet(
 
                 OutlinedTextField(
                     value = draft.amountReceivedText,
-                    onValueChange = { onUpdatePayment(draft.paymentMethod, draft.isCreditSale, it) },
+                    onValueChange = { typed ->
+                        val parsed = typed.toDoubleOrNull() ?: 0.0
+                        val nowCredit = typed.isBlank() || parsed <= 0.0
+                        val resolvedMethod = if (!nowCredit && draft.paymentMethod == "Credit (Udhaar)") {
+                            paymentMethods.firstOrNull() ?: "Cash"
+                        } else {
+                            draft.paymentMethod
+                        }
+                        onUpdatePayment(resolvedMethod, nowCredit, typed)
+                    },
                     label = {
                         Text(
-                            text = if (draft.isCreditSale) "Advance Paid ($currency)" else "Cash Received ($currency)",
+                            text = if (draft.isCreditSale || draft.amountReceivedText.isBlank()) "Cash Received ($currency)" else "Cash Received ($currency)",
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     },
-                    placeholder = { Text(Formatters.formatPkr(draft.grandTotal, currency).removePrefix("$currency "), maxLines = 1) },
+                    placeholder = { Text("Leave blank for Credit (Udhaar)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
                     modifier = Modifier
@@ -482,7 +632,7 @@ fun PosCheckoutSheet(
                 ) {
                     val exactVal = ceil(draft.grandTotal).toInt()
                     val presets = listOf(
-                        "Exact" to exactVal.toString(),
+                        "Full Cash" to exactVal.toString(),
                         "$currency 1,000" to "1000",
                         "$currency 5,000" to "5000",
                         "$currency 10,000" to "10000",
@@ -492,12 +642,16 @@ fun PosCheckoutSheet(
                         OutlinedButton(
                             onClick = {
                                 val isCred = value == "0"
-                                onUpdatePayment(
-                                    if (isCred) "Credit (Udhaar)" else draft.paymentMethod,
-                                    isCred,
-                                    value
-                                )
+                                val method = if (isCred) {
+                                    "Credit (Udhaar)"
+                                } else if (draft.paymentMethod == "Credit (Udhaar)") {
+                                    paymentMethods.firstOrNull() ?: "Cash"
+                                } else {
+                                    draft.paymentMethod
+                                }
+                                onUpdatePayment(method, isCred, value)
                             },
+                            shape = RoundedCornerShape(10.dp),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                             modifier = Modifier.height(34.dp)
                         ) {
@@ -519,6 +673,11 @@ fun PosCheckoutSheet(
                         }
                     }
                 } else if (draft.balanceDue > 0.01) {
+                    val creditBannerLabel = if (draft.appliedPaidAmount <= 0.01) {
+                        "Credit (Udhaar) Balance"
+                    } else {
+                        "Remaining Credit"
+                    }
                     Surface(shape = RoundedCornerShape(8.dp), color = semantic.warningBg) {
                         Row(
                             modifier = Modifier
@@ -526,8 +685,20 @@ fun PosCheckoutSheet(
                                 .padding(horizontal = 10.dp, vertical = 6.dp),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("Remaining Credit", style = MaterialTheme.typography.labelLarge, color = semantic.warningFg)
+                            Text(creditBannerLabel, style = MaterialTheme.typography.labelLarge, color = semantic.warningFg)
                             Text(Formatters.formatPkr(draft.balanceDue, currency), style = MonoFigureMedium, color = semantic.warningFg)
+                        }
+                    }
+                } else if (draft.grandTotal > 0.0) {
+                    Surface(shape = RoundedCornerShape(8.dp), color = semantic.positiveBg) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Paid in Full", style = MaterialTheme.typography.labelLarge, color = semantic.positiveFg)
+                            Text(Formatters.formatPkr(draft.appliedPaidAmount, currency), style = MonoFigureMedium, color = semantic.positiveFg)
                         }
                     }
                 }
@@ -1083,7 +1254,8 @@ fun InvoiceShareDialog(
     val inv = event.invoiceWithItems.invoice
     val biz = event.business
     val currency = biz.resolvedCurrency()
-    val caption = "Invoice #${inv.invoiceNumber} from ${biz.name} — Total: ${Formatters.formatPkr(inv.grandTotal, currency)}"
+    val caption = "Receipt #${inv.invoiceNumber} from ${biz.name} | Total: ${Formatters.formatPkr(inv.grandTotal, currency)}"
+    val isThermalImageMode = event.style == InvoicePdfStyle.THERMAL_COUPON && event.imageFile != null
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1107,7 +1279,7 @@ fun InvoiceShareDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Style Toggle: 80mm Thermal Coupon vs Ultra-Minimal Compact A4 PDF
+                // Style Toggle: 80mm Thermal Receipt Image vs Minimal Compact PDF
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                     SegmentedButton(
                         selected = event.style == InvoicePdfStyle.THERMAL_COUPON,
@@ -1165,7 +1337,7 @@ fun InvoiceShareDialog(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                text = "Sleek compact A4 PDF with clean hairline dividers.",
+                                text = "Compact minimal PDF invoice ready to share or print.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -1174,15 +1346,29 @@ fun InvoiceShareDialog(
                 }
 
                 Button(
-                    onClick = { ShareHelper.sharePdfOnWhatsApp(context, event.pdfFile, caption) },
+                    onClick = {
+                        if (isThermalImageMode && event.imageFile != null) {
+                            ShareHelper.shareImageOnWhatsApp(context, event.imageFile, caption)
+                        } else {
+                            ShareHelper.sharePdfOnWhatsApp(context, event.pdfFile, caption)
+                        }
+                    },
                     colors = ButtonDefaults.buttonColors(containerColor = WhatsAppGreen),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("share_whatsapp_button")
                 ) {
-                    Icon(Icons.Default.Share, contentDescription = stringResource(R.string.cd_share_whatsapp), modifier = Modifier.size(18.dp))
+                    Icon(
+                        imageVector = if (isThermalImageMode) Icons.Default.Image else Icons.Default.Share,
+                        contentDescription = stringResource(R.string.cd_share_whatsapp),
+                        modifier = Modifier.size(18.dp)
+                    )
                     Spacer(Modifier.width(8.dp))
-                    Text("Send via WhatsApp", maxLines = 1, softWrap = false)
+                    Text(
+                        text = if (isThermalImageMode) "Send Image on WhatsApp" else "Send PDF on WhatsApp",
+                        maxLines = 1,
+                        softWrap = false
+                    )
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1190,11 +1376,14 @@ fun InvoiceShareDialog(
                 ) {
                     OutlinedButton(
                         onClick = {
-                            ShareHelper.sharePdfViaEmail(
+                            val fileToSend = if (isThermalImageMode && event.imageFile != null) event.imageFile else event.pdfFile
+                            val mime = if (isThermalImageMode && event.imageFile != null) "image/png" else "application/pdf"
+                            ShareHelper.shareFileViaEmail(
                                 context = context,
-                                pdfFile = event.pdfFile,
+                                file = fileToSend,
+                                mimeType = mime,
                                 recipientEmail = inv.customerEmail,
-                                subject = "Invoice #${inv.invoiceNumber} — ${biz.name}",
+                                subject = "Receipt #${inv.invoiceNumber} - ${biz.name}",
                                 body = "Dear ${inv.customerName},\n\nPlease find attached your receipt #${inv.invoiceNumber} totaling ${Formatters.formatPkr(inv.grandTotal, currency)}.\n\nRegards,\n${biz.name}"
                             )
                         },
@@ -1209,11 +1398,13 @@ fun InvoiceShareDialog(
                     }
                     OutlinedButton(
                         onClick = {
+                            val fileToSend = if (isThermalImageMode && event.imageFile != null) event.imageFile else event.pdfFile
+                            val mime = if (isThermalImageMode && event.imageFile != null) "image/png" else "application/pdf"
                             ShareHelper.shareFileGeneric(
                                 context = context,
-                                file = event.pdfFile,
-                                mimeType = "application/pdf",
-                                chooserTitle = "Share / Print Receipt PDF",
+                                file = fileToSend,
+                                mimeType = mime,
+                                chooserTitle = if (isThermalImageMode) "Share Receipt Image" else "Share / Print Receipt PDF",
                                 extraText = caption
                             )
                         },
@@ -1222,9 +1413,13 @@ fun InvoiceShareDialog(
                             .weight(1.3f)
                             .testTag("share_pdf_generic_button")
                     ) {
-                        Icon(Icons.Default.PictureAsPdf, contentDescription = stringResource(R.string.cd_share_pdf), modifier = Modifier.size(16.dp))
+                        Icon(
+                            imageVector = if (isThermalImageMode) Icons.Default.Image else Icons.Default.PictureAsPdf,
+                            contentDescription = stringResource(R.string.cd_share_pdf),
+                            modifier = Modifier.size(16.dp)
+                        )
                         Spacer(Modifier.width(4.dp))
-                        Text("Print / Share", maxLines = 1, softWrap = false)
+                        Text(if (isThermalImageMode) "Share Image" else "Print / Share", maxLines = 1, softWrap = false)
                     }
                 }
             }

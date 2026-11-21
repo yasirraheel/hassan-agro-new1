@@ -123,7 +123,7 @@ fun TeamManagementSection(
                     Spacer(Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "${activeBusiness.name} — Team & Roles",
+                            text = "${activeBusiness.name}: Team & Roles",
                             style = MaterialTheme.typography.titleMedium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -726,7 +726,7 @@ private fun TeamUserEditorDialog(
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
-                            text = "${chosen.name} — Included Access (${chosen.permissions.size})",
+                            text = "${chosen.name}: Included Access (${chosen.permissions.size})",
                             style = MaterialTheme.typography.labelLarge
                         )
                         val labels = chosen.permissions.map { key ->

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Services\RbacService;
+use App\Services\SmtpOtpService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -11,8 +12,10 @@ use Illuminate\Support\Str;
 
 class AuthController extends Controller
 {
-    public function __construct(private readonly RbacService $rbac)
-    {
+    public function __construct(
+        private readonly RbacService $rbac,
+        private readonly SmtpOtpService $smtpOtp
+    ) {
     }
 
     public function login(Request $request): JsonResponse
@@ -113,6 +116,38 @@ class AuthController extends Controller
         $preset = $presets[$businessType] ?? $presets['GENERAL'];
         $themes = config('sync.themes', []);
         $resolvedTheme = array_key_exists($themeKey, $themes) ? $themeKey : ($preset['default_theme'] ?? 'OCEAN');
+
+        // Email OTP verification gate (OFF by default; enforced only when Admin enables it)
+        if ($this->smtpOtp->isOtpEnabled()) {
+            $otpCode = trim((string) $request->input('otpCode', ''));
+            if ($otpCode === '') {
+                try {
+                    $sent = $this->smtpOtp->sendRegistrationOtp($email, $name, $businessName, $resolvedTheme);
+                    return response()->json([
+                        'success' => true,
+                        'otpRequired' => true,
+                        'email' => $sent['email'],
+                        'expiresInSeconds' => $sent['expiresInSeconds'],
+                        'message' => "A 6-digit verification code has been sent to {$sent['email']}.",
+                    ], 200);
+                } catch (\Throwable $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Could not send verification email: ' . $e->getMessage(),
+                    ], 500);
+                }
+            }
+
+            $verification = $this->smtpOtp->verifyAndConsumeOtp($email, $otpCode);
+            if (!$verification['ok']) {
+                return response()->json([
+                    'success' => false,
+                    'otpRequired' => true,
+                    'email' => $email,
+                    'message' => $verification['message'],
+                ], 422);
+            }
+        }
 
         $now = $this->rbac->nowMs();
         $businessId = (string) Str::uuid();

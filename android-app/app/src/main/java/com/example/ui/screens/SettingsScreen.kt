@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DarkMode
@@ -50,6 +51,7 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -120,6 +122,7 @@ fun SettingsScreen(
     authSession: AuthSession,
     businesses: List<BusinessEntity>,
     activeBusiness: BusinessEntity,
+    autoIncludeTax: Boolean,
     appearanceMode: ThemeAppearanceMode,
     serverConfig: ServerSyncConfig,
     syncState: SyncUiState,
@@ -131,6 +134,7 @@ fun SettingsScreen(
     onAppearanceModeChange: (ThemeAppearanceMode) -> Unit,
     onSwitchBusiness: (String) -> Unit,
     onSaveBusiness: (BusinessEntity, Boolean) -> Unit,
+    onUpdateTaxSettings: (Double, Boolean, List<TaxPreset>) -> Unit,
     onDeleteBusiness: (String) -> Unit,
     onUpdateBusinessLogo: (String, Uri) -> Unit,
     onSaveServerConfig: (String, String, String, Boolean) -> Unit,
@@ -336,7 +340,7 @@ fun SettingsScreen(
                         }
                     }
 
-                    // Appearance (Dark / Light / System) Card — available to all roles
+                    // Appearance (Dark / Light / System) Card (available to all roles)
                     item {
                         Surface(
                             shape = MaterialTheme.shapes.large,
@@ -476,6 +480,13 @@ fun SettingsScreen(
                                     )
                                     onSaveBusiness(updated, false)
                                 }
+                            )
+                        }
+                        item {
+                            QuickSalesTaxSettingsCard(
+                                business = activeBusiness,
+                                autoIncludeTax = autoIncludeTax,
+                                onSaveTaxSettings = onUpdateTaxSettings
                             )
                         }
                     }
@@ -1413,6 +1424,7 @@ fun BusinessProfileEditorSheet(
         }
 
         // Section 7: Saved Tax Presets (used in Stock Pricing Calculator & POS Checkout)
+        var editingTaxIndex by remember { mutableIntStateOf(-1) }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Text(
             text = "Saved Tax Presets",
@@ -1420,31 +1432,70 @@ fun BusinessProfileEditorSheet(
             color = MaterialTheme.colorScheme.primary
         )
         Text(
-            text = "Quick tax presets available when calculating product costs or billing on POS.",
+            text = "Tap any saved tax preset below to edit it in-place, or add a new rate for Stock & POS.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             taxPresets.forEachIndexed { idx, preset ->
+                val isEditing = editingTaxIndex == idx
                 Surface(
-                    shape = MaterialTheme.shapes.small,
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (isEditing) {
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    },
+                    border = if (isEditing) {
+                        BorderStroke(1.2.dp, MaterialTheme.colorScheme.primary)
+                    } else null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable {
+                            editingTaxIndex = idx
+                            newTaxName = preset.name
+                            newTaxRate = Formatters.formatDecimal(preset.rate)
+                        }
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                            .padding(horizontal = 10.dp, vertical = 7.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(
-                            text = "${preset.name} — ${Formatters.formatDecimal(preset.rate)}%",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.Medium
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = "${preset.name}: ${Formatters.formatDecimal(preset.rate)}%",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                                color = if (isEditing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                            if (isEditing) {
+                                Text(
+                                    text = "(Editing)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
                         if (taxPresets.size > 1) {
                             IconButton(
-                                onClick = { taxPresets = taxPresets.filterIndexed { i, _ -> i != idx } },
+                                onClick = {
+                                    taxPresets = taxPresets.filterIndexed { i, _ -> i != idx }
+                                    if (editingTaxIndex == idx) {
+                                        editingTaxIndex = -1
+                                        newTaxName = ""
+                                        newTaxRate = ""
+                                    } else if (editingTaxIndex > idx) {
+                                        editingTaxIndex -= 1
+                                    }
+                                },
                                 modifier = Modifier.size(28.dp)
                             ) {
                                 Icon(Icons.Default.Delete, contentDescription = "Remove tax preset", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
@@ -1460,9 +1511,10 @@ fun BusinessProfileEditorSheet(
                 OutlinedTextField(
                     value = newTaxName,
                     onValueChange = { newTaxName = it },
-                    label = { Text("Tax Name", maxLines = 1) },
+                    label = { Text(if (editingTaxIndex >= 0) "Edit Tax Name" else "Tax Name", maxLines = 1) },
                     placeholder = { Text("e.g. GST") },
                     singleLine = true,
+                    shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.weight(1.3f)
                 )
                 OutlinedTextField(
@@ -1471,20 +1523,46 @@ fun BusinessProfileEditorSheet(
                     label = { Text("Rate %", maxLines = 1) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
+                    shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.weight(0.8f)
                 )
                 Button(
                     onClick = {
                         val rate = newTaxRate.toDoubleOrNull()
-                        if (newTaxName.isNotBlank() && rate != null && rate >= 0.0) {
-                            taxPresets = taxPresets + TaxPreset(newTaxName.trim(), rate)
+                        val cleanName = newTaxName.trim()
+                        if (cleanName.isNotBlank() && rate != null && rate >= 0.0) {
+                            if (editingTaxIndex in taxPresets.indices) {
+                                taxPresets = taxPresets.toMutableList().apply {
+                                    this[editingTaxIndex] = TaxPreset(cleanName, rate)
+                                }
+                                editingTaxIndex = -1
+                            } else {
+                                taxPresets = taxPresets + TaxPreset(cleanName, rate)
+                            }
                             newTaxName = ""
                             newTaxRate = ""
                         }
                     },
-                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                     modifier = Modifier.height(50.dp)
-                ) { Text("Add") }
+                ) {
+                    Text(if (editingTaxIndex >= 0) "Update" else "Add", maxLines = 1, softWrap = false)
+                }
+            }
+            if (editingTaxIndex >= 0) {
+                TextButton(
+                    onClick = {
+                        editingTaxIndex = -1
+                        newTaxName = ""
+                        newTaxRate = ""
+                    },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Cancel edit", style = MaterialTheme.typography.labelMedium)
+                }
             }
         }
 
@@ -1763,4 +1841,261 @@ private fun QuickPricingMarginSettingsCard(
         }
     }
 }
+
+@Composable
+private fun QuickSalesTaxSettingsCard(
+    business: BusinessEntity,
+    autoIncludeTax: Boolean,
+    onSaveTaxSettings: (Double, Boolean, List<TaxPreset>) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var defaultRateText by remember(business.id, business.defaultTaxRate) {
+        mutableStateOf(Formatters.formatDecimal(business.defaultTaxRate))
+    }
+    var autoInclude by remember(business.id, autoIncludeTax) {
+        mutableStateOf(autoIncludeTax)
+    }
+    var presets by remember(business.id, business.taxPresetsJson) {
+        mutableStateOf(business.taxPresets())
+    }
+    var presetName by remember { mutableStateOf("") }
+    var presetRate by remember { mutableStateOf("") }
+    var editingPresetIdx by remember { mutableIntStateOf(-1) }
+
+    val statusSummary = buildString {
+        append("Default: ${Formatters.formatDecimal(business.defaultTaxRate)}%")
+        append(" • ")
+        append(if (autoIncludeTax) "Auto-included at Checkout" else "Optional at Checkout")
+        append(" • ${presets.size} presets")
+    }
+
+    Surface(
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .testTag("settings_sales_tax_header"),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Icon(
+                        Icons.Default.Receipt,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "Sales Tax & GST Checkout Rules",
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = statusSummary,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                Text(
+                    text = if (expanded) "Hide" else "Edit",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            AnimatedVisibility(visible = expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Auto-Include Tax at Checkout", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                text = "When ON, new POS bills automatically apply your default sales tax rate.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Switch(
+                            checked = autoInclude,
+                            onCheckedChange = { autoInclude = it },
+                            modifier = Modifier.testTag("settings_auto_include_tax_switch")
+                        )
+                    }
+
+                    OutlinedTextField(
+                        value = defaultRateText,
+                        onValueChange = { defaultRateText = it },
+                        label = { Text("Default Sales Tax / GST (%)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        placeholder = { Text("e.g. 18") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("settings_default_tax_rate_input")
+                    )
+
+                    Text(
+                        text = "Tax Presets (tap any preset to edit)",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        presets.forEachIndexed { idx, preset ->
+                            val isEditing = editingPresetIdx == idx
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (isEditing) {
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                },
+                                border = if (isEditing) BorderStroke(1.2.dp, MaterialTheme.colorScheme.primary) else null,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        editingPresetIdx = idx
+                                        presetName = preset.name
+                                        presetRate = Formatters.formatDecimal(preset.rate)
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${preset.name}: ${Formatters.formatDecimal(preset.rate)}%",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Medium,
+                                        color = if (isEditing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        TextButton(
+                                            onClick = {
+                                                defaultRateText = Formatters.formatDecimal(preset.rate)
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                                        ) {
+                                            Text("Use as Default", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                        if (presets.size > 1) {
+                                            IconButton(
+                                                onClick = {
+                                                    presets = presets.filterIndexed { i, _ -> i != idx }
+                                                    if (editingPresetIdx == idx) {
+                                                        editingPresetIdx = -1
+                                                        presetName = ""
+                                                        presetRate = ""
+                                                    } else if (editingPresetIdx > idx) {
+                                                        editingPresetIdx -= 1
+                                                    }
+                                                },
+                                                modifier = Modifier.size(28.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Delete,
+                                                    contentDescription = "Remove preset",
+                                                    tint = MaterialTheme.colorScheme.error,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = presetName,
+                                onValueChange = { presetName = it },
+                                label = { Text(if (editingPresetIdx >= 0) "Edit Name" else "Tax Name", maxLines = 1) },
+                                placeholder = { Text("e.g. GST") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.weight(1.3f)
+                            )
+                            OutlinedTextField(
+                                value = presetRate,
+                                onValueChange = { presetRate = it },
+                                label = { Text("Rate %", maxLines = 1) },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                singleLine = true,
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.weight(0.8f)
+                            )
+                            Button(
+                                onClick = {
+                                    val r = presetRate.toDoubleOrNull()
+                                    val clean = presetName.trim()
+                                    if (clean.isNotBlank() && r != null && r >= 0.0) {
+                                        if (editingPresetIdx in presets.indices) {
+                                            presets = presets.toMutableList().apply {
+                                                this[editingPresetIdx] = TaxPreset(clean, r)
+                                            }
+                                            editingPresetIdx = -1
+                                        } else {
+                                            presets = presets + TaxPreset(clean, r)
+                                        }
+                                        presetName = ""
+                                        presetRate = ""
+                                    }
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                                modifier = Modifier.height(50.dp)
+                            ) {
+                                Text(if (editingPresetIdx >= 0) "Update" else "Add", maxLines = 1, softWrap = false)
+                            }
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            val parsedRate = defaultRateText.toDoubleOrNull()?.coerceIn(0.0, 100.0) ?: 0.0
+                            onSaveTaxSettings(parsedRate, autoInclude, presets)
+                            expanded = false
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("settings_save_tax_settings_btn")
+                    ) {
+                        Text("Save Sales Tax Settings", maxLines = 1, softWrap = false)
+                    }
+                }
+            }
+        }
+    }
+}
+
 

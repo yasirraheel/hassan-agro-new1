@@ -1007,7 +1007,7 @@ private fun ProductEditorDialog(
         }
 
         Text(
-            text = "Selling Prices ($currency) — Auto-populated & Editable",
+            text = "Selling Prices ($currency) (Auto-filled & Editable)",
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.primary
         )

@@ -192,13 +192,18 @@ fun ExpensesScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
                         )
+                        Spacer(Modifier.width(8.dp))
                         Text(
-                            text = Formatters.formatPkr(monthlyTotal, currency),
-                            style = MonoFigureLarge,
+                            text = Formatters.formatCompactPkr(monthlyTotal, currency),
+                            style = MonoFigureMedium,
+                            fontWeight = FontWeight.Bold,
                             color = semantic.negativeFg,
-                            maxLines = 1
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }
@@ -295,7 +300,7 @@ fun ExpensesScreen(
                                     }
                                     if (expense.payee.isNotBlank() || expense.notes.isNotBlank()) {
                                         Text(
-                                            text = listOf(expense.payee, expense.notes).filter { it.isNotBlank() }.joinToString(" — "),
+                                            text = listOf(expense.payee, expense.notes).filter { it.isNotBlank() }.joinToString(" - "),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1,

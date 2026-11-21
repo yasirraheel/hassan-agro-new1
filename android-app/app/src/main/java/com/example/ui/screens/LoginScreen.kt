@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.BusinessCenter
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MarkEmailRead
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.Visibility
@@ -40,12 +41,14 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -89,6 +92,9 @@ fun LoginScreen(
         themeKey: String,
         currencySymbol: String
     ) -> Unit,
+    onVerifyOtp: (String) -> Unit,
+    onResendOtp: () -> Unit,
+    onCancelOtp: () -> Unit,
     onClearError: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -109,6 +115,7 @@ fun LoginScreen(
     var businessName by remember { mutableStateOf("") }
     var businessType by remember { mutableStateOf(BusinessTypePreset.GENERAL) }
     var currencySymbol by remember { mutableStateOf("Rs.") }
+    var otpCode by remember(authState.otpRequired) { mutableStateOf("") }
     var localError by remember { mutableStateOf<String?>(null) }
 
     val displayedError = localError ?: authState.errorMessage
@@ -182,6 +189,165 @@ fun LoginScreen(
                 }
             }
 
+            if (authState.otpRequired) {
+                Surface(
+                    shape = MaterialTheme.shapes.extraLarge,
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primaryContainer),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.MarkEmailRead,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Verify Your Email",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = authState.otpBusinessName.ifBlank { businessName },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = "Enter the 6-digit verification code sent to ${authState.otpEmail.ifBlank { email }} to finish creating your business account.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        if (!authState.otpInfoMessage.isNullOrBlank()) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                            ) {
+                                Text(
+                                    text = authState.otpInfoMessage,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 9.dp)
+                                )
+                            }
+                        }
+
+                        OutlinedTextField(
+                            value = otpCode,
+                            onValueChange = { input ->
+                                otpCode = input.filter { it.isDigit() }.take(6)
+                                localError = null
+                                onClearError()
+                            },
+                            label = { Text("6-Digit Verification Code *", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            placeholder = { Text("e.g. 482910") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("auth_otp_input")
+                        )
+
+                        if (!displayedError.isNullOrBlank()) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.errorContainer
+                            ) {
+                                Text(
+                                    text = displayedError,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                                )
+                            }
+                        }
+
+                        Button(
+                            onClick = {
+                                if (otpCode.length != 6) {
+                                    localError = "Please enter the 6-digit verification code."
+                                } else {
+                                    onVerifyOtp(otpCode)
+                                }
+                            },
+                            enabled = !authState.isLoading,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(52.dp)
+                                .testTag("auth_verify_otp_button")
+                        ) {
+                            if (authState.isLoading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                    color = Color.White
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Text("Verifying...", maxLines = 1, softWrap = false)
+                            } else {
+                                Text("Verify & Create Business", maxLines = 1, softWrap = false)
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    localError = null
+                                    onCancelOtp()
+                                },
+                                enabled = !authState.isLoading,
+                                modifier = Modifier.testTag("auth_cancel_otp_button")
+                            ) {
+                                Text("Edit Details", maxLines = 1, softWrap = false)
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    localError = null
+                                    onResendOtp()
+                                },
+                                enabled = !authState.isLoading,
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.testTag("auth_resend_otp_button")
+                            ) {
+                                Text("Resend Code", maxLines = 1, softWrap = false)
+                            }
+                        }
+                    }
+                }
+            } else {
             // Mode Switcher
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                 SegmentedButton(
@@ -438,6 +604,7 @@ fun LoginScreen(
                         }
                     }
                 }
+            }
             }
 
             Text(

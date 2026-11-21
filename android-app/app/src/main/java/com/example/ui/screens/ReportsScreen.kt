@@ -394,13 +394,13 @@ fun ReportsScreen(
                     ) {
                         KpiCard(
                             label = "Total Sales (${monthPl.invoiceCount})",
-                            value = Formatters.formatPkr(grossSales, currency),
+                            value = Formatters.formatShortPkr(grossSales, currency),
                             accent = primaryColor,
                             modifier = Modifier.weight(1f)
                         )
                         KpiCard(
-                            label = "Cost of Goods (COGS)",
-                            value = Formatters.formatPkr(monthPl.costOfGoodsSold, currency),
+                            label = "Cost of Goods",
+                            value = Formatters.formatShortPkr(monthPl.costOfGoodsSold, currency),
                             accent = semantic.warningFg,
                             modifier = Modifier.weight(1f)
                         )
@@ -411,13 +411,13 @@ fun ReportsScreen(
                     ) {
                         KpiCard(
                             label = String.format(Locale.US, "Gross Profit (%.0f%%)", monthPl.grossMarginPercent),
-                            value = Formatters.formatPkr(monthPl.grossProfit, currency),
+                            value = Formatters.formatShortPkr(monthPl.grossProfit, currency),
                             accent = if (monthPl.grossProfit >= 0) semantic.positiveFg else semantic.negativeFg,
                             modifier = Modifier.weight(1f)
                         )
                         KpiCard(
                             label = "Operating Expenses",
-                            value = Formatters.formatPkr(monthPl.operatingExpenses, currency),
+                            value = Formatters.formatShortPkr(monthPl.operatingExpenses, currency),
                             accent = semantic.negativeFg,
                             modifier = Modifier.weight(1f)
                         )
@@ -428,13 +428,13 @@ fun ReportsScreen(
                     ) {
                         KpiCard(
                             label = if (monthPl.netProfit >= 0) "Net Profit" else "Net Loss",
-                            value = Formatters.formatPkr(monthPl.netProfit, currency),
+                            value = Formatters.formatShortPkr(monthPl.netProfit, currency),
                             accent = if (monthPl.netProfit >= 0) semantic.positiveFg else semantic.negativeFg,
                             modifier = Modifier.weight(1f)
                         )
                         KpiCard(
                             label = "Stock Purchased",
-                            value = Formatters.formatPkr(monthPl.stockPurchaseSpend, currency),
+                            value = Formatters.formatStockCompactPkr(monthPl.stockPurchaseSpend, currency),
                             accent = MaterialTheme.colorScheme.secondary,
                             modifier = Modifier.weight(1f)
                         )
@@ -444,14 +444,14 @@ fun ReportsScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         KpiCard(
-                            label = "Inventory Asset Value",
-                            value = Formatters.formatPkr(stockValuation, currency),
+                            label = "Stock Asset Value",
+                            value = Formatters.formatStockCompactPkr(stockValuation, currency),
                             accent = MaterialTheme.colorScheme.tertiary,
                             modifier = Modifier.weight(1f)
                         )
                         KpiCard(
                             label = "Tax Collected",
-                            value = Formatters.formatPkr(taxCollected, currency),
+                            value = Formatters.formatShortPkr(taxCollected, currency),
                             accent = semantic.warningFg,
                             modifier = Modifier.weight(1f)
                         )
@@ -728,7 +728,7 @@ fun ReportsScreen(
                                         )
                                         Spacer(Modifier.width(8.dp))
                                         Text(
-                                            text = "${Formatters.formatPkr(sum, currency)} (${(fraction * 100).toInt()}%)",
+                                            text = "${Formatters.formatShortPkr(sum, currency)} (${(fraction * 100).toInt()}%)",
                                             style = MonoCodeSmall,
                                             fontWeight = FontWeight.SemiBold,
                                             maxLines = 1,

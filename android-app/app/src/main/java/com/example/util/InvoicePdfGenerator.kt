@@ -53,23 +53,13 @@ object InvoicePdfGenerator {
         InvoicePdfStyle.MINIMAL_A4 -> generateMinimalA4Pdf(context, business, invoiceWithItems)
     }
 
-    /**
-     * 80mm Thermal Printer Coupon Receipt with crisp monospace styling, dashed dividers,
-     * and a serrated / zig-zag torn-coupon bottom edge.
-     */
-    fun generateThermalReceiptPdf(
-        context: Context,
+    private fun computeThermalPageHeight(
         business: BusinessEntity,
         invoiceWithItems: InvoiceWithItems
-    ): File {
+    ): Int {
         val invoice = invoiceWithItems.invoice
         val items = invoiceWithItems.items
-        val currency = business.resolvedCurrency()
-        val pad = 12f
-        val contentWidth = THERMAL_WIDTH - (pad * 2f)
-
-        // Compute dynamic thermal roll height based on content
-        var estimatedHeight = 160f + (items.size * 24f)
+        var estimatedHeight = 166f + (items.size * 24f)
         if (business.tagline.isNotBlank()) estimatedHeight += 11f
         if (business.address.isNotBlank()) estimatedHeight += 11f
         if (business.phone.isNotBlank()) estimatedHeight += 11f
@@ -80,12 +70,75 @@ object InvoicePdfGenerator {
         if (invoice.taxEnabled && invoice.taxRatePercent > 0.0) estimatedHeight += 12f
         if (invoice.balanceDue > 0.01 && !invoice.isReturned) estimatedHeight += 14f
         if (invoice.notes.isNotBlank()) estimatedHeight += 16f
-        val pageHeight = estimatedHeight.coerceAtLeast(280f).toInt()
+        return estimatedHeight.coerceAtLeast(280f).toInt()
+    }
+
+    /**
+     * Generates a crisp high-resolution PNG image of the serrated thermal receipt
+     * so it renders directly inline on WhatsApp without needing a PDF reader.
+     */
+    fun generateThermalReceiptImage(
+        context: Context,
+        business: BusinessEntity,
+        invoiceWithItems: InvoiceWithItems
+    ): File {
+        val pageHeight = computeThermalPageHeight(business, invoiceWithItems)
+        val scale = 3.5f
+        val bitmapWidth = (THERMAL_WIDTH * scale).toInt()
+        val bitmapHeight = (pageHeight * scale).toInt()
+        val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.scale(scale, scale)
+
+        drawThermalReceiptOnCanvas(canvas, pageHeight, business, invoiceWithItems)
+
+        val dir = File(context.cacheDir, "invoices").apply { mkdirs() }
+        val safeNumber = invoiceWithItems.invoice.invoiceNumber.replace(Regex("[^A-Za-z0-9_-]"), "_")
+        val file = File(dir, "Receipt_${safeNumber}.png")
+        FileOutputStream(file).use { out ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+        }
+        bitmap.recycle()
+        return file
+    }
+
+    /**
+     * 80mm Thermal Printer Coupon Receipt with crisp monospace styling, dashed dividers,
+     * and a serrated / zig-zag torn-coupon bottom edge.
+     */
+    fun generateThermalReceiptPdf(
+        context: Context,
+        business: BusinessEntity,
+        invoiceWithItems: InvoiceWithItems
+    ): File {
+        val pageHeight = computeThermalPageHeight(business, invoiceWithItems)
 
         val doc = PdfDocument()
         val pageInfo = PdfDocument.PageInfo.Builder(THERMAL_WIDTH, pageHeight, 1).create()
         val page = doc.startPage(pageInfo)
-        val canvas = page.canvas
+
+        drawThermalReceiptOnCanvas(page.canvas, pageHeight, business, invoiceWithItems)
+
+        doc.finishPage(page)
+
+        val dir = File(context.cacheDir, "invoices").apply { mkdirs() }
+        val safeNumber = invoiceWithItems.invoice.invoiceNumber.replace(Regex("[^A-Za-z0-9_-]"), "_")
+        val file = File(dir, "Receipt_${safeNumber}.pdf")
+        FileOutputStream(file).use { doc.writeTo(it) }
+        doc.close()
+        return file
+    }
+
+    private fun drawThermalReceiptOnCanvas(
+        canvas: Canvas,
+        pageHeight: Int,
+        business: BusinessEntity,
+        invoiceWithItems: InvoiceWithItems
+    ) {
+        val invoice = invoiceWithItems.invoice
+        val items = invoiceWithItems.items
+        val currency = business.resolvedCurrency()
+        val pad = 12f
 
         // Soft paper background around the bottom serrated teeth so teeth visibly stand out
         val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(241, 245, 249) }
@@ -299,21 +352,12 @@ object InvoicePdfGenerator {
             color = ink
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
         })
-
-        doc.finishPage(page)
-
-        val dir = File(context.cacheDir, "invoices").apply { mkdirs() }
-        val safeNumber = invoice.invoiceNumber.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        val file = File(dir, "Receipt_${safeNumber}.pdf")
-        FileOutputStream(file).use { doc.writeTo(it) }
-        doc.close()
-        return file
     }
 
     /**
-     * Truly Minimal, Compact, Modern Invoice PDF:
-     * Content-fitted A5-width sheet (420pt wide, dynamic height — zero wasted blank half-page),
-     * crisp readable 9.5–15.5pt typography, rounded status pill, subtle alternating rows,
+     * Minimal, Compact, Modern Invoice PDF:
+     * Content-fitted A5-width sheet (420pt wide, dynamic height, zero wasted blank half-page),
+     * crisp readable 9.5 to 15.5pt typography, rounded status pill, subtle alternating rows,
      * and clean highlight box for Grand Total.
      */
     fun generateMinimalA4Pdf(
@@ -709,7 +753,7 @@ object InvoicePdfGenerator {
         }
 
         canvas.drawText(scopeTitle, titleX, y + 13f, titlePaint)
-        canvas.drawText("Monthly Profit & Loss Report — $monthLabel", titleX, y + 27f, boldPaint)
+        canvas.drawText("Monthly Profit & Loss Report ($monthLabel)", titleX, y + 27f, boldPaint)
         canvas.drawText("Generated: ${Formatters.formatDateTime(System.currentTimeMillis())}", titleX, y + 39f, mutedPaint)
 
         y += 54f

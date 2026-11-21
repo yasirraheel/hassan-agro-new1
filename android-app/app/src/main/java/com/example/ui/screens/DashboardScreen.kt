@@ -35,13 +35,23 @@ import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.WarningAmber
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Receipt
+import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,14 +62,19 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.data.local.AuthSession
 import com.example.data.local.BusinessEntity
 import com.example.data.local.ExpenseEntity
 import com.example.data.local.ExpiryStatus
+import com.example.data.local.InvoicePaymentStatus
 import com.example.data.local.InvoiceWithItems
 import com.example.data.local.ProductEntity
 import com.example.ui.components.EmptyStateCard
 import com.example.ui.components.PerformedByPill
+import com.example.ui.components.ProofImageViewerDialog
 import com.example.ui.theme.LocalAppThemeOption
 import com.example.ui.theme.LocalSemanticColors
 import com.example.ui.theme.MonoCodeSmall
@@ -69,6 +84,7 @@ import com.example.util.DashboardPeriod
 import com.example.util.Formatters
 import com.example.util.ProfitLossCalculator
 import com.example.viewmodel.InventoryFilter
+import java.io.File
 
 @Composable
 fun DashboardScreen(
@@ -90,6 +106,7 @@ fun DashboardScreen(
     val activeTheme = LocalAppThemeOption.current
     val semantic = LocalSemanticColors.current
     val currency = activeBusiness.resolvedCurrency()
+    var selectedDetailInvoice by remember { mutableStateOf<InvoiceWithItems?>(null) }
 
     val (periodStart, periodEnd) = remember(selectedPeriod) {
         selectedPeriod.boundsMillis()
@@ -284,21 +301,21 @@ fun DashboardScreen(
                             Spacer(Modifier.height(14.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 HeroSubMetric(
                                     label = "Total Sales",
-                                    value = Formatters.formatCompactPkr(pnl.totalSales, currency),
+                                    value = Formatters.formatShortPkr(pnl.totalSales, currency),
                                     modifier = Modifier.weight(1f)
                                 )
                                 HeroSubMetric(
-                                    label = "Cost (COGS)",
-                                    value = Formatters.formatCompactPkr(pnl.costOfGoodsSold, currency),
+                                    label = "Cost",
+                                    value = Formatters.formatShortPkr(pnl.costOfGoodsSold, currency),
                                     modifier = Modifier.weight(1f)
                                 )
                                 HeroSubMetric(
                                     label = "Gross Profit",
-                                    value = Formatters.formatCompactPkr(pnl.grossProfit, currency),
+                                    value = Formatters.formatShortPkr(pnl.grossProfit, currency),
                                     modifier = Modifier.weight(1f)
                                 )
                             }
@@ -354,7 +371,7 @@ fun DashboardScreen(
                             )
                             PnlDetailCell(
                                 label = "Stock Bought",
-                                value = Formatters.formatCompactPkr(pnl.stockPurchaseSpend, currency),
+                                value = Formatters.formatStockCompactPkr(pnl.stockPurchaseSpend, currency),
                                 subtext = "Inventory spend",
                                 accent = MaterialTheme.colorScheme.tertiary,
                                 bg = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.65f),
@@ -367,7 +384,7 @@ fun DashboardScreen(
                         ) {
                             PnlDetailCell(
                                 label = "Stock Asset Value",
-                                value = Formatters.formatCompactPkr(pnl.inventoryCostValuation, currency),
+                                value = Formatters.formatStockCompactPkr(pnl.inventoryCostValuation, currency),
                                 subtext = "At purchase cost",
                                 accent = MaterialTheme.colorScheme.primary,
                                 bg = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
@@ -531,82 +548,96 @@ fun DashboardScreen(
                 }
             } else {
                 items(periodInvoices.take(6), key = { it.invoice.id }) { entry ->
-                    val invoiceCost = remember(entry, products) {
-                        val map = products.associate { it.id to it.purchasePrice }
-                        entry.items.sumOf { item ->
-                            val c = if (item.costPrice > 0.0) item.costPrice else (map[item.productId] ?: 0.0)
-                            c * item.quantity
-                        }
-                    }
-                    val invoiceProfit = entry.invoice.grandTotal - invoiceCost
+                    val statusEnum = InvoicePaymentStatus.fromName(entry.invoice.paymentStatus)
+                    val performerName = entry.invoice.performedByName.trim().ifBlank { "System" }
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onOpenInvoice(entry) },
+                            .clickable { selectedDetailInvoice = entry }
+                            .testTag("dashboard_sale_row_${entry.invoice.id}"),
                         shape = MaterialTheme.shapes.medium,
                         color = MaterialTheme.colorScheme.surface,
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                     ) {
-                        Row(
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(14.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .padding(horizontal = 13.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
                                 Text(
-                                    text = entry.invoice.customerName,
-                                    style = MaterialTheme.typography.titleMedium,
+                                    text = entry.invoice.customerName.ifBlank { "Walk-in Customer" },
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.onSurface,
                                     maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
                                 )
+                                Spacer(Modifier.width(10.dp))
                                 Text(
-                                    text = "${entry.invoice.invoiceNumber} • ${entry.items.size} items • ${Formatters.formatDate(entry.invoice.createdAt)}",
-                                    style = MaterialTheme.typography.bodySmall,
+                                    text = Formatters.formatPkrOneDecimal(entry.invoice.grandTotal, currency),
+                                    style = MonoFigureMedium.copy(fontSize = 14.sp, fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "${Formatters.formatDate(entry.invoice.createdAt)} • $performerName",
+                                    style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
                                 )
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    PerformedByPill(name = entry.invoice.performedByName)
-                                    if (!entry.invoice.isReturned && invoiceCost > 0.0) {
-                                        Surface(
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = if (invoiceProfit >= 0.0) semantic.positiveBg else semantic.negativeBg
-                                        ) {
-                                            Text(
-                                                text = "${if (invoiceProfit >= 0.0) "+" else ""}${Formatters.formatCompactPkr(invoiceProfit, currency)}",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = if (invoiceProfit >= 0.0) semantic.positiveFg else semantic.negativeFg,
-                                                fontWeight = FontWeight.SemiBold,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                            Spacer(Modifier.width(8.dp))
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text(
-                                    text = Formatters.formatPkr(entry.invoice.grandTotal, currency),
-                                    style = MonoFigureMedium,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = "Receipt / PDF",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                Spacer(Modifier.width(8.dp))
+                                val (badgeBg, badgeFg, badgeText) = when {
+                                    entry.invoice.isReturned -> Triple(
+                                        MaterialTheme.colorScheme.surfaceVariant,
+                                        MaterialTheme.colorScheme.onSurfaceVariant,
+                                        "Returned"
                                     )
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(12.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    statusEnum == InvoicePaymentStatus.PAID -> Triple(
+                                        semantic.positiveBg,
+                                        semantic.positiveFg,
+                                        "Paid"
+                                    )
+                                    statusEnum == InvoicePaymentStatus.PARTIAL -> Triple(
+                                        semantic.warningBg,
+                                        semantic.warningFg,
+                                        "Partial"
+                                    )
+                                    else -> Triple(
+                                        semantic.negativeBg,
+                                        semantic.negativeFg,
+                                        "Credit"
+                                    )
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = badgeBg
+                                ) {
+                                    Text(
+                                        text = badgeText,
+                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                        color = badgeFg,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                     )
                                 }
                             }
@@ -617,6 +648,283 @@ fun DashboardScreen(
 
             item { Spacer(Modifier.height(12.dp)) }
         }
+    }
+
+    selectedDetailInvoice?.let { entry ->
+        SaleQuickDetailDialog(
+            entry = entry,
+            products = products,
+            currency = currency,
+            onOpenReceipt = {
+                selectedDetailInvoice = null
+                onOpenInvoice(entry)
+            },
+            onDismiss = { selectedDetailInvoice = null }
+        )
+    }
+}
+
+@Composable
+private fun SaleQuickDetailDialog(
+    entry: InvoiceWithItems,
+    products: List<ProductEntity>,
+    currency: String,
+    onOpenReceipt: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val inv = entry.invoice
+    val semantic = LocalSemanticColors.current
+    val statusEnum = InvoicePaymentStatus.fromName(inv.paymentStatus)
+    val invoiceCost = remember(entry, products) {
+        val map = products.associate { it.id to it.purchasePrice }
+        entry.items.sumOf { item ->
+            val c = if (item.costPrice > 0.0) item.costPrice else (map[item.productId] ?: 0.0)
+            c * item.quantity
+        }
+    }
+    val invoiceProfit = inv.grandTotal - invoiceCost
+    val hasProof = !inv.proofImagePath.isNullOrBlank() && File(inv.proofImagePath).exists()
+    var showProofFull by remember { mutableStateOf(false) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .widthIn(max = 460.dp)
+                .testTag("dashboard_sale_detail_dialog"),
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            tonalElevation = 6.dp,
+            shadowElevation = 12.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = inv.customerName.ifBlank { "Walk-in Customer" },
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "${inv.invoiceNumber} • ${Formatters.formatDateTime(inv.createdAt)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    PerformedByPill(name = inv.performedByName)
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = when {
+                            inv.isReturned -> MaterialTheme.colorScheme.surfaceVariant
+                            statusEnum == InvoicePaymentStatus.PAID -> semantic.positiveBg
+                            statusEnum == InvoicePaymentStatus.PARTIAL -> semantic.warningBg
+                            else -> semantic.negativeBg
+                        }
+                    ) {
+                        Text(
+                            text = if (inv.isReturned) "Returned" else "${statusEnum.label} • ${inv.paymentMethod}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = when {
+                                inv.isReturned -> MaterialTheme.colorScheme.onSurfaceVariant
+                                statusEnum == InvoicePaymentStatus.PAID -> semantic.positiveFg
+                                statusEnum == InvoicePaymentStatus.PARTIAL -> semantic.warningFg
+                                else -> semantic.negativeFg
+                            },
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+
+                if (inv.customerPhone.isNotBlank()) {
+                    Text(
+                        text = "Phone: ${inv.customerPhone}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                Text("Items (${entry.items.size})", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    entry.items.forEach { item ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = item.productName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "${item.quantity} x ${Formatters.formatDecimal(item.unitPrice)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = Formatters.formatPkrOneDecimal(item.lineTotal, currency),
+                                style = MonoCodeSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                SaleDetailSummaryLine("Subtotal", Formatters.formatPkrOneDecimal(inv.subtotal, currency))
+                if (inv.discountAmount > 0.0) {
+                    SaleDetailSummaryLine("Discount", "-${Formatters.formatPkrOneDecimal(inv.discountAmount, currency)}")
+                }
+                if (inv.taxEnabled && inv.taxRatePercent > 0.0) {
+                    SaleDetailSummaryLine("Tax (${Formatters.formatDecimal(inv.taxRatePercent)}%)", Formatters.formatPkrOneDecimal(inv.taxAmount, currency))
+                }
+                SaleDetailSummaryLine(
+                    label = "Grand Total",
+                    value = Formatters.formatPkrOneDecimal(inv.grandTotal, currency),
+                    bold = true,
+                    valueColor = MaterialTheme.colorScheme.primary
+                )
+                SaleDetailSummaryLine("Paid", Formatters.formatPkrOneDecimal(inv.amountPaid, currency))
+                if (inv.balanceDue > 0.01 && !inv.isReturned) {
+                    SaleDetailSummaryLine(
+                        label = "Balance Due",
+                        value = Formatters.formatPkrOneDecimal(inv.balanceDue, currency),
+                        bold = true,
+                        valueColor = semantic.negativeFg
+                    )
+                }
+                if (!inv.isReturned && invoiceCost > 0.0) {
+                    SaleDetailSummaryLine(
+                        label = "Sale Profit",
+                        value = "${if (invoiceProfit >= 0.0) "+" else ""}${Formatters.formatPkrOneDecimal(invoiceProfit, currency)}",
+                        bold = true,
+                        valueColor = if (invoiceProfit >= 0.0) semantic.positiveFg else semantic.negativeFg
+                    )
+                }
+                if (inv.notes.isNotBlank()) {
+                    Text(
+                        text = "Note: ${inv.notes}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                if (hasProof) {
+                    OutlinedButton(
+                        onClick = { showProofFull = true },
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("View Payment Proof Photo", maxLines = 1, softWrap = false)
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .weight(0.85f)
+                            .height(46.dp)
+                    ) {
+                        Text("Close", maxLines = 1, softWrap = false)
+                    }
+                    Button(
+                        onClick = onOpenReceipt,
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .weight(1.35f)
+                            .height(46.dp)
+                            .testTag("dashboard_sale_open_receipt_btn")
+                    ) {
+                        Icon(Icons.Default.Receipt, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Receipt & Share", maxLines = 1, softWrap = false)
+                    }
+                }
+            }
+        }
+    }
+
+    if (showProofFull && hasProof) {
+        ProofImageViewerDialog(
+            title = "Payment Proof #${inv.invoiceNumber}",
+            imagePath = inv.proofImagePath!!,
+            onDismiss = { showProofFull = false }
+        )
+    }
+}
+
+@Composable
+private fun SaleDetailSummaryLine(
+    label: String,
+    value: String,
+    bold: Boolean = false,
+    valueColor: Color = MaterialTheme.colorScheme.onSurface
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = if (bold) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodySmall,
+            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+            color = if (bold) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            style = if (bold) MonoFigureMedium.copy(fontSize = 14.sp, fontWeight = FontWeight.Bold) else MonoCodeSmall,
+            color = valueColor,
+            maxLines = 1,
+            softWrap = false
+        )
     }
 }
 
@@ -672,24 +980,24 @@ private fun HeroSubMetric(
 ) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(12.dp),
-        color = Color.White.copy(alpha = 0.15f)
+        shape = RoundedCornerShape(10.dp),
+        color = Color.White.copy(alpha = 0.16f)
     ) {
-        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 7.dp, vertical = 7.dp)) {
             Text(
                 text = label,
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.White.copy(alpha = 0.82f),
-                maxLines = 1
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                color = Color.White.copy(alpha = 0.85f),
+                maxLines = 1,
+                softWrap = false
             )
             Spacer(Modifier.height(2.dp))
             Text(
                 text = value,
-                style = MonoCodeSmall,
+                style = MonoCodeSmall.copy(fontSize = 11.5.sp, fontWeight = FontWeight.Bold),
                 color = Color.White,
-                fontWeight = FontWeight.Bold,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                softWrap = false
             )
         }
     }

@@ -49,7 +49,9 @@ data class SyncResult(
 
 data class AuthActionResult(
     val success: Boolean,
-    val message: String
+    val message: String,
+    val otpRequired: Boolean = false,
+    val otpEmail: String = ""
 )
 
 class HassanAgroRepository(
@@ -66,11 +68,16 @@ class HassanAgroRepository(
     val businessesFlow: Flow<List<BusinessEntity>> = businessDao.observeBusinesses()
     val activeBusinessIdFlow: Flow<String> = prefs.activeBusinessIdFlow
     val appearanceModeFlow: Flow<ThemeAppearanceMode> = prefs.appearanceModeFlow
+    val autoIncludeTaxMapFlow: Flow<Map<String, Boolean>> = prefs.autoIncludeTaxMapFlow
     val serverConfigFlow: Flow<ServerSyncConfig> = prefs.serverConfigFlow
     val authSessionFlow: Flow<AuthSession> = prefs.authSessionFlow
 
     suspend fun setAppearanceMode(mode: ThemeAppearanceMode) {
         prefs.setAppearanceMode(mode)
+    }
+
+    suspend fun setAutoIncludeTaxForBusiness(businessId: String, enabled: Boolean) {
+        prefs.setAutoIncludeTaxForBusiness(businessId, enabled)
     }
 
     val allProductsFlow: Flow<List<ProductEntity>> = productDao.observeAllActive()
@@ -198,7 +205,8 @@ class HassanAgroRepository(
         businessName: String,
         businessType: String,
         themeKey: String,
-        currencySymbol: String
+        currencySymbol: String,
+        otpCode: String? = null
     ): AuthActionResult = withContext(Dispatchers.IO) {
         val cleanUrl = serverBaseUrl.trim().ifBlank { PreferencesStore.DEFAULT_SERVER_URL }
         if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
@@ -217,10 +225,19 @@ class HassanAgroRepository(
                     businessType = businessType,
                     themeKey = themeKey,
                     currencySymbol = currencySymbol.trim().ifBlank { "Rs." },
-                    deviceId = deviceId
+                    deviceId = deviceId,
+                    otpCode = otpCode?.trim()?.ifBlank { null }
                 )
             )
             val body = resp.body()
+            if (resp.isSuccessful && body != null && body.otpRequired) {
+                return@withContext AuthActionResult(
+                    success = true,
+                    message = body.message ?: "Verification code sent to ${email.trim()}",
+                    otpRequired = true,
+                    otpEmail = body.email ?: email.trim()
+                )
+            }
             if (!resp.isSuccessful || body == null || !body.success || body.token.isNullOrBlank() || body.user == null) {
                 val err = body?.message ?: extractErrorMessage(resp.errorBody()?.string(), "Could not create account")
                 return@withContext AuthActionResult(false, err)

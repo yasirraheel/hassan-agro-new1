@@ -409,7 +409,8 @@ fun ThemeColorSwatchPicker(
 }
 
 /**
- * Interactive chip editor allowing a business owner to add or remove categories / payment methods.
+ * Interactive chip editor allowing a business owner to tap an existing tag to edit/update it in-place,
+ * add new tags, or remove tags with the close icon.
  */
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -422,6 +423,10 @@ fun EditableTagListEditor(
     modifier: Modifier = Modifier
 ) {
     var draftText by remember { mutableStateOf("") }
+    var editingIndex by remember { mutableStateOf<Int?>(null) }
+
+    val activeEditIdx = editingIndex?.takeIf { it in items.indices }
+    val isEditing = activeEditIdx != null
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -433,41 +438,95 @@ fun EditableTagListEditor(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(
-                text = "$title (${items.size})",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "$title (${items.size})",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = if (isEditing) "Editing tag" else "Tap a tag to edit",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isEditing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                items.forEach { item ->
-                    InputChip(
-                        selected = false,
-                        onClick = {
-                            if (items.size > 1) {
-                                onItemsChange(items.filterNot { it == item })
+                items.forEachIndexed { idx, item ->
+                    val isSelectedForEdit = activeEditIdx == idx
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (isSelectedForEdit) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(
+                            width = if (isSelectedForEdit) 1.5.dp else 1.dp,
+                            color = if (isSelectedForEdit) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outlineVariant
+                        ),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable {
+                                if (isSelectedForEdit) {
+                                    editingIndex = null
+                                    draftText = ""
+                                } else {
+                                    editingIndex = idx
+                                    draftText = item
+                                }
                             }
-                        },
-                        label = {
+                            .testTag("${testTagPrefix}_chip_$idx")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(
+                                start = 10.dp,
+                                end = if (items.size > 1) 4.dp else 10.dp,
+                                top = 6.dp,
+                                bottom = 6.dp
+                            ),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
                             Text(
                                 text = item,
                                 style = MaterialTheme.typography.labelMedium,
+                                color = if (isSelectedForEdit) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface,
+                                fontWeight = if (isSelectedForEdit) FontWeight.Bold else FontWeight.Medium,
                                 maxLines = 1,
                                 softWrap = false
                             )
-                        },
-                        trailingIcon = if (items.size > 1) {
-                            {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Remove $item",
-                                    modifier = Modifier.size(14.dp)
-                                )
+                            if (items.size > 1) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable {
+                                            if (editingIndex == idx) {
+                                                editingIndex = null
+                                                draftText = ""
+                                            } else if (editingIndex != null && idx < editingIndex!!) {
+                                                editingIndex = editingIndex!! - 1
+                                            }
+                                            onItemsChange(items.filterIndexed { i, _ -> i != idx })
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Remove $item",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
                             }
-                        } else null
-                    )
+                        }
+                    }
                 }
             }
             Row(
@@ -478,7 +537,30 @@ fun EditableTagListEditor(
                 OutlinedTextField(
                     value = draftText,
                     onValueChange = { draftText = it },
-                    placeholder = { Text(placeholder, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    placeholder = {
+                        Text(
+                            if (isEditing) "Edit selected tag..." else placeholder,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
+                    trailingIcon = if (isEditing || draftText.isNotEmpty()) {
+                        {
+                            IconButton(
+                                onClick = {
+                                    editingIndex = null
+                                    draftText = ""
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Clear",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    } else null,
+                    shape = RoundedCornerShape(10.dp),
                     singleLine = true,
                     modifier = Modifier
                         .weight(1f)
@@ -487,20 +569,41 @@ fun EditableTagListEditor(
                 Button(
                     onClick = {
                         val cleaned = draftText.trim()
-                        if (cleaned.isNotEmpty() && items.none { it.equals(cleaned, ignoreCase = true) }) {
+                        if (cleaned.isEmpty()) return@Button
+                        if (activeEditIdx != null) {
+                            val duplicate = items.indices.any { i ->
+                                i != activeEditIdx && items[i].equals(cleaned, ignoreCase = true)
+                            }
+                            if (!duplicate) {
+                                val updated = items.toMutableList().apply { set(activeEditIdx, cleaned) }
+                                onItemsChange(updated)
+                                editingIndex = null
+                                draftText = ""
+                            }
+                        } else if (items.none { it.equals(cleaned, ignoreCase = true) }) {
                             onItemsChange(items + cleaned)
                             draftText = ""
                         }
                     },
                     enabled = draftText.trim().isNotEmpty(),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
                     modifier = Modifier
-                        .height(48.dp)
+                        .height(50.dp)
                         .testTag("${testTagPrefix}_add_btn")
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = "Add", modifier = Modifier.size(18.dp))
+                    Icon(
+                        imageVector = if (isEditing) Icons.Default.Check else Icons.Default.Add,
+                        contentDescription = if (isEditing) "Update" else "Add",
+                        modifier = Modifier.size(16.dp)
+                    )
                     Spacer(Modifier.width(4.dp))
-                    Text("Add", maxLines = 1, softWrap = false)
+                    Text(
+                        text = if (isEditing) "Update" else "Add",
+                        style = MaterialTheme.typography.labelLarge,
+                        maxLines = 1,
+                        softWrap = false
+                    )
                 }
             }
         }
