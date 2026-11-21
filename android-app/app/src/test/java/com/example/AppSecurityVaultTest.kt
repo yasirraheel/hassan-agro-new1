@@ -10,7 +10,7 @@ class AppSecurityVaultTest {
 
     @Test
     fun sealAndUnseal_succeedsOnlyForMatchingPackageAndSalt() {
-        val pkg = "com.aistudio.hassanagro.k7m2px"
+        val pkg = "com.business.manager"
         val salt = "0123456789abcdef0123456789abcdef"
         val plainUrl = "https://ledger.hassanagro.com/"
         val plainSecret = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
@@ -34,7 +34,7 @@ class AppSecurityVaultTest {
     @Test
     fun computeRequestSignature_matchesExpectedHmacFormat() {
         val sig1 = AppSecurityVault.computeRequestSignature(
-            packageName = "com.aistudio.hassanagro.k7m2px",
+            packageName = "com.business.manager",
             certSha256 = "aa:bb:cc:dd",
             timestampSeconds = "1730000000",
             method = "post",
@@ -42,7 +42,7 @@ class AppSecurityVaultTest {
             appSecret = "super-secret-key"
         )
         val sig2 = AppSecurityVault.computeRequestSignature(
-            packageName = "com.aistudio.hassanagro.k7m2px",
+            packageName = "com.business.manager",
             certSha256 = "AABBCCDD",
             timestampSeconds = "1730000000",
             method = "POST",
@@ -50,7 +50,7 @@ class AppSecurityVaultTest {
             appSecret = "super-secret-key"
         )
         val sigDifferentSecret = AppSecurityVault.computeRequestSignature(
-            packageName = "com.aistudio.hassanagro.k7m2px",
+            packageName = "com.business.manager",
             certSha256 = "AABBCCDD",
             timestampSeconds = "1730000000",
             method = "POST",
@@ -78,7 +78,7 @@ class AppSecurityVaultTest {
 
     @Test
     fun buildConfig_unsealsBuildTimeEncryptedServerUrl() {
-        val pkg = "com.aistudio.hassanagro.k7m2px"
+        val pkg = "com.business.manager"
         assertTrue(BuildConfig.SEALED_SALT.length == 32)
         assertTrue(BuildConfig.SEALED_BASE_URL.isNotBlank())
         assertTrue(!BuildConfig.SEALED_BASE_URL.contains("http"))

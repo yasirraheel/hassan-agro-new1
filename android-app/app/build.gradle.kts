@@ -48,7 +48,7 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    val appId = "com.aistudio.hassanagro.k7m2px"
+    val appId = "com.business.manager"
     applicationId = appId
     minSdk = 24
     targetSdk = 36

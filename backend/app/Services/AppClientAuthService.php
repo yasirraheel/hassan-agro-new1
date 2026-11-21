@@ -12,7 +12,7 @@ use Illuminate\Support\Str;
 class AppClientAuthService
 {
     private const ENFORCE_SETTING_KEY = 'enforce_app_attestation';
-    private const DEFAULT_ANDROID_PACKAGE = 'com.aistudio.hassanagro.k7m2px';
+    public const DEFAULT_ANDROID_PACKAGE = 'com.business.manager';
     private const MAX_CLOCK_SKEW_SECONDS = 300; // +/- 5 minutes
 
     public function nowMs(): int
